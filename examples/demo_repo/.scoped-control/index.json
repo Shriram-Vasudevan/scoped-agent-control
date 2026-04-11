@@ -1,0 +1,45 @@
+{
+  "root": "examples/demo_repo",
+  "surfaces": [
+    {
+      "depends_on": [
+        "config.behavior"
+      ],
+      "file": "assistant_prompt.txt",
+      "hash": "f99cea789bfc50aae13c71b874a799b5a6d4776c7cb613b353010c40c75921b1",
+      "id": "prompts.system",
+      "invariants": [
+        "preserve the assistant tone guide"
+      ],
+      "line_end": 8,
+      "line_start": 7,
+      "modes": [
+        "query",
+        "edit"
+      ],
+      "roles": [
+        "maintainer",
+        "reviewer"
+      ]
+    },
+    {
+      "depends_on": [],
+      "file": "behavior.yaml",
+      "hash": "2d2be63dcc1064b4685e3ad0c5dfb4f41aa3d417b5d325b290888f6d3889818f",
+      "id": "config.behavior",
+      "invariants": [
+        "do not remove the audience field"
+      ],
+      "line_end": 8,
+      "line_start": 6,
+      "modes": [
+        "query"
+      ],
+      "roles": [
+        "maintainer",
+        "reviewer"
+      ]
+    }
+  ],
+  "warnings": []
+}

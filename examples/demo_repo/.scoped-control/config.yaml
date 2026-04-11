@@ -1,0 +1,45 @@
+version: 1
+default_provider: claude_code
+roles:
+  - name: maintainer
+    description: Maintains prompts and settings in the demo repo.
+    query_paths:
+      - "**/*"
+    edit_paths:
+      - "**/*"
+  - name: reviewer
+    description: Reviews prompt and config context without editing.
+    query_paths:
+      - "**/*"
+    edit_paths: []
+validators:
+  - name: yaml-parse
+    command: python -c "import yaml, pathlib; yaml.safe_load(pathlib.Path('behavior.yaml').read_text())"
+    modes:
+      - edit
+    timeout_seconds: 300
+integrations:
+  github:
+    enabled: false
+    workflow_path: .github/workflows/scoped-control.yml
+  slack:
+    enabled: false
+  email:
+    enabled: false
+limits:
+  max_changed_files: 5
+  max_diff_lines: 400
+executors:
+  default: claude_code
+  codex:
+    command:
+      - codex
+    query_args:
+      - exec
+    edit_args:
+      - exec
+  claude_code:
+    command:
+      - claude
+    query_args: []
+    edit_args: []

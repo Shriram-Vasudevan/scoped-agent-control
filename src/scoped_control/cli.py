@@ -9,6 +9,7 @@ from pathlib import Path
 from scoped_control.app import ScopedControlApp
 from scoped_control.config.loader import bootstrap_repo
 from scoped_control.errors import ScopedControlError
+from scoped_control.integrations.github import load_remote_edit_request
 from scoped_control.tui.commands import execute_args
 
 
@@ -29,6 +30,17 @@ def build_parser() -> argparse.ArgumentParser:
     index_parser = subparsers.add_parser("index", help="Show the stored surface index summary")
     index_parser.add_argument("--path", type=Path, default=Path.cwd(), help="Repo root or nested path to inspect")
 
+    install_parser = subparsers.add_parser("install", help="Install integration scaffolding")
+    install_subparsers = install_parser.add_subparsers(dest="install_command", required=True)
+    install_github_parser = install_subparsers.add_parser("github", help="Install GitHub remote-edit workflow")
+    install_github_parser.add_argument("--path", type=Path, default=Path.cwd(), help="Repo root or nested path to inspect")
+    install_github_parser.add_argument("--workflow-path")
+    install_github_parser.add_argument("--force", action="store_true")
+    install_slack_parser = install_subparsers.add_parser("slack", help="Explain Slack placeholder status")
+    install_slack_parser.add_argument("--path", type=Path, default=Path.cwd(), help="Repo root or nested path to inspect")
+    install_email_parser = install_subparsers.add_parser("email", help="Explain email placeholder status")
+    install_email_parser.add_argument("--path", type=Path, default=Path.cwd(), help="Repo root or nested path to inspect")
+
     query_parser = subparsers.add_parser("query", help="Run a read-only scoped query")
     query_parser.add_argument("role_name")
     query_parser.add_argument("request_tokens", nargs="+")
@@ -42,6 +54,11 @@ def build_parser() -> argparse.ArgumentParser:
     edit_parser.add_argument("--executor", choices=("codex", "claude_code", "fake"))
     edit_parser.add_argument("--top-k", type=int, default=1)
     edit_parser.add_argument("--path", type=Path, default=Path.cwd(), help="Repo root or nested path to inspect")
+
+    remote_edit_parser = subparsers.add_parser("remote-edit", help="Run a remote edit from a GitHub event payload")
+    remote_edit_parser.add_argument("--event-file", type=Path, required=True, help="Path to a GitHub event payload JSON file")
+    remote_edit_parser.add_argument("--executor", choices=("codex", "claude_code", "fake"))
+    remote_edit_parser.add_argument("--path", type=Path, default=Path.cwd(), help="Repo root or nested path to inspect")
 
     role_parser = subparsers.add_parser("role", help="Manage roles in config.yaml")
     role_subparsers = role_parser.add_subparsers(dest="role_command", required=True)
@@ -86,7 +103,9 @@ def main(argv: list[str] | None = None) -> int:
             return _run_init(args.path, args.force)
         if args.command == "tui":
             return _run_tui(args.path)
-        if args.command in {"check", "scan", "index", "query", "edit", "role", "surface", "validator"}:
+        if args.command == "remote-edit":
+            return _run_remote_edit(args)
+        if args.command in {"check", "scan", "index", "install", "query", "edit", "role", "surface", "validator"}:
             return _run_shared_command(args)
         return _run_tui(Path.cwd())
     except ScopedControlError as exc:
@@ -94,6 +113,9 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     except KeyError as exc:
         print(f"Error: unknown role `{exc.args[0]}`", file=sys.stderr)
+        return 1
+    except ValueError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
         return 1
 
 
@@ -108,6 +130,23 @@ def _run_init(path: Path, force: bool) -> int:
 def _run_shared_command(args: argparse.Namespace) -> int:
     path = args.path
     result = execute_args(path, args)
+    stream = sys.stdout if result.ok else sys.stderr
+    print(result.message, file=stream)
+    for line in result.lines:
+        print(line, file=stream)
+    return 0 if result.ok else 1
+
+
+def _run_remote_edit(args: argparse.Namespace) -> int:
+    request = load_remote_edit_request(args.event_file)
+    namespace = argparse.Namespace(
+        command="edit",
+        role_name=request.role_name,
+        request_tokens=[request.request],
+        executor=args.executor or request.executor,
+        top_k=request.top_k,
+    )
+    result = execute_args(args.path, namespace, raw_command=f"remote-edit {request.role_name}")
     stream = sys.stdout if result.ok else sys.stderr
     print(result.message, file=stream)
     for line in result.lines:

@@ -1,0 +1,8 @@
+# surface: prompts.system
+# roles: maintainer, reviewer
+# modes: query, edit
+# invariants: preserve the assistant tone guide
+# depends_on: config.behavior
+
+You are a precise assistant.
+Answer with concise, technical guidance.
