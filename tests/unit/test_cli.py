@@ -24,3 +24,12 @@ def test_cli_check_reports_success(tmp_path, capsys):
     captured = capsys.readouterr()
     assert exit_code == 0
     assert "OK:" in captured.out
+
+
+def test_cli_without_args_prints_guidance(capsys):
+    exit_code = main([])
+
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    assert "usage: scoped-control" in captured.out
+    assert "scoped-control setup" in captured.out

@@ -120,9 +120,11 @@ class ScopedControlApp(App[None]):
         if context.config is None:
             roles_panel.set_body("No config loaded yet.")
             validators_panel.set_body("Validators are unavailable until the repo is initialized.")
-            surfaces_panel.set_body("Run `/scan` after adding annotations.")
+            surfaces_panel.set_body("Run `scoped-control setup` or `/annotate` and then `/scan`.")
             requests_panel.set_body("Slash commands are available once the repo is initialized.")
-            logs_panel.set_body("\n".join(self.console_state.results) or context.config_error or "Run `scoped-control init` to bootstrap this repo.")
+            logs_panel.set_body(
+                "\n".join(self.console_state.results) or context.config_error or "Run `scoped-control setup` to bootstrap this repo."
+            )
             status.update(
                 f"[b]Repo[/b]\n{context.paths.root}\n\n[b]Status[/b]\n{context.config_error or 'Not initialized'}"
             )

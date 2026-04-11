@@ -15,10 +15,10 @@ class RemoteEditRequest:
     top_k: int = 1
 
 
-def render_github_workflow() -> str:
+def render_github_workflow(*, slack_webhook_env: str = "SLACK_WEBHOOK_URL") -> str:
     """Return a deterministic GitHub Actions workflow for remote edit runs."""
 
-    return """name: scoped-control remote edit
+    return f"""name: scoped-control remote edit
 
 on:
   workflow_dispatch:
@@ -65,8 +65,9 @@ jobs:
           pip install .
       - name: Run scoped-control remote edit
         env:
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          OPENAI_API_KEY: ${{{{ secrets.OPENAI_API_KEY }}}}
+          ANTHROPIC_API_KEY: ${{{{ secrets.ANTHROPIC_API_KEY }}}}
+          {slack_webhook_env}: ${{{{ secrets.{slack_webhook_env} }}}}
         run: |
           scoped-control remote-edit --path . --event-file "$GITHUB_EVENT_PATH"
       - name: Show resulting diff
