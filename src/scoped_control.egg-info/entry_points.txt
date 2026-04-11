@@ -1,2 +1,0 @@
-[console_scripts]
-scoped-control = scoped_control.cli:main
