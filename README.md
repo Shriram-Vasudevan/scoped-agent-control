@@ -6,7 +6,7 @@ It allows teams to define exactly who can read or modify which parts of a reposi
 
 In practice, this enables non-technical users (e.g. PMs, GTM, etc.) to safely make targeted changes without risking unintended or disallowed side effects across the system.
 
-The main entrypoint is the `scoped-control` CLI. The TUI is optional and available through `scoped-control tui`.
+The default entrypoint is the interactive Textual app. Run `scoped-control` to open the TUI, then use `/setup` to bootstrap a repo and slash commands for the rest.
 
 ## Install
 
@@ -35,10 +35,18 @@ pip install -e .
 
 ## Quick Start
 
-### 1. Run the guided setup
+### 1. Open the TUI
 
 ```bash
-scoped-control setup --path .
+scoped-control
+```
+
+If the repo is not initialized, the setup screen opens automatically inside the app. You can also reopen it any time with `/setup` or by pressing `s`.
+
+### 2. Run the guided setup inside the TUI
+
+```bash
+/setup
 ```
 
 This is the main onboarding flow. It walks you through:
@@ -60,7 +68,7 @@ What `setup` does in one pass:
 - rebuilds the surface index
 - optionally installs GitHub and Slack wiring
 
-### 2. Use the non-interactive setup form when you already know the role intent
+### 3. Use the non-interactive CLI setup only if you want automation without the TUI
 
 ```bash
 scoped-control setup \
@@ -80,17 +88,17 @@ scoped-control setup --path . --role recruiter --intent "..." --planner-executor
 
 If you still want to override the scope manually, `--query-path` and `--edit-path` remain available.
 
-### 3. Inspect what was indexed
+### 4. Inspect what was indexed
 
 ```bash
-scoped-control surface list --path .
-scoped-control surface show careers.openings --path .
+/surface list
+/surface show careers.openings
 ```
 
-### 4. Run a scoped query
+### 5. Run a scoped query
 
 ```bash
-scoped-control query recruiter Explain the careers page copy --executor codex --path .
+/query recruiter Explain the careers page copy --executor codex
 ```
 
 What this does:
@@ -100,10 +108,10 @@ What this does:
 - builds a constrained brief
 - sends only that approved context to the selected executor
 
-### 5. Run a scoped edit
+### 6. Run a scoped edit
 
 ```bash
-scoped-control edit recruiter Update the job intro copy --executor codex --path .
+/edit recruiter Update the job intro copy --executor codex
 ```
 
 What this does:
@@ -113,19 +121,19 @@ What this does:
 - enforces file scope, surface spans, diff limits, dependencies, and validators
 - writes changes back only if every check passes
 
-### 6. Re-annotate after changing role paths
+### 7. Re-annotate after changing role paths
 
 ```bash
-scoped-control annotate --role recruiter --path .
+/annotate --role recruiter
 ```
 
 If you omit `--query-glob` and `--edit-glob`, `annotate` derives them from the role’s configured `query_paths` and `edit_paths`.
 
-### 7. Remove scoped-control artifacts in one shot
+### 8. Remove scoped-control artifacts in one shot
 
 ```bash
-scoped-control cleanup --path . --dry-run
-scoped-control cleanup --path . --force
+/cleanup --dry-run
+/cleanup --force
 ```
 
 `cleanup` removes the repo artifacts that scoped-control created:

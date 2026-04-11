@@ -139,7 +139,7 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         if args.command is None:
-            return _run_no_command(parser)
+            return _run_tui(Path.cwd())
         if args.command == "init":
             return _run_init(args.path, args.force)
         if args.command == "setup":
@@ -150,7 +150,7 @@ def main(argv: list[str] | None = None) -> int:
             return _run_remote_edit(args)
         if args.command in {"check", "scan", "index", "cleanup", "annotate", "install", "query", "edit", "role", "surface", "validator"}:
             return _run_shared_command(args)
-        return _run_no_command(parser)
+        return _run_tui(Path.cwd())
     except ScopedControlError as exc:
         print(f"Error: {exc}", file=sys.stderr)
         return 1
@@ -160,13 +160,6 @@ def main(argv: list[str] | None = None) -> int:
     except ValueError as exc:
         print(f"Error: {exc}", file=sys.stderr)
         return 1
-
-
-def _run_no_command(parser: argparse.ArgumentParser) -> int:
-    parser.print_help()
-    print()
-    print("Next: run `scoped-control setup` for guided onboarding or `scoped-control tui` to open the console.")
-    return 0
 
 
 def _run_init(path: Path, force: bool) -> int:

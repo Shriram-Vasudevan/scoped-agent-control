@@ -11,8 +11,9 @@ from textual.widgets import Footer, Header, Input, Static
 
 from scoped_control.config.loader import load_repo_context
 from scoped_control.index.store import get_surface, load_index, list_surfaces
+from scoped_control.setup_flow import run_setup
 from scoped_control.tui.commands import CommandResult, execute_command
-from scoped_control.tui.screens import SummaryPanel
+from scoped_control.tui.screens import SetupScreen, SetupSubmission, SummaryPanel
 from scoped_control.tui.state import ConsoleState
 
 
@@ -53,11 +54,13 @@ class ScopedControlApp(App[None]):
         Binding("q", "quit", "Quit"),
         Binding("ctrl+c", "quit", "Quit"),
         Binding("slash", "focus_command", "Command"),
+        Binding("s", "open_setup", "Setup"),
     ]
 
     def __init__(self, *, start_path: Path | None = None) -> None:
         super().__init__()
         self.start_path = start_path or Path.cwd()
+        self._setup_prompted = False
         self.console_state = ConsoleState(
             repo_root=self.start_path.resolve(),
             config_path=(self.start_path / ".scoped-control" / "config.yaml").resolve(),
@@ -75,15 +78,19 @@ class ScopedControlApp(App[None]):
             yield SummaryPanel("Logs / Results", id="logs")
             yield Static("", id="status")
         with Vertical(id="command-row"):
-            yield Input(placeholder="/role list", id="command-input")
+            yield Input(placeholder="/setup", id="command-input")
         yield Footer()
 
     def on_mount(self) -> None:
         self.action_focus_command()
         self.refresh_repo_state()
+        self.call_after_refresh(self._maybe_prompt_setup)
 
     def action_focus_command(self) -> None:
         self.query_one("#command-input", Input).focus()
+
+    def action_open_setup(self) -> None:
+        self.open_setup_screen()
 
     def refresh_repo_state(self) -> None:
         context = load_repo_context(self.start_path, require_config=False)
@@ -116,20 +123,23 @@ class ScopedControlApp(App[None]):
         requests_panel = self.query_one("#requests", SummaryPanel)
         logs_panel = self.query_one("#logs", SummaryPanel)
         status = self.query_one("#status", Static)
+        command_input = self.query_one("#command-input", Input)
 
         if context.config is None:
+            command_input.placeholder = "/setup"
             roles_panel.set_body("No config loaded yet.")
             validators_panel.set_body("Validators are unavailable until the repo is initialized.")
-            surfaces_panel.set_body("Run `scoped-control setup` or `/annotate` and then `/scan`.")
-            requests_panel.set_body("Slash commands are available once the repo is initialized.")
+            surfaces_panel.set_body("Use `/setup` to bootstrap the repo inside this TUI.")
+            requests_panel.set_body("Start with `/setup`, then use slash commands after onboarding.")
             logs_panel.set_body(
-                "\n".join(self.console_state.results) or context.config_error or "Run `scoped-control setup` to bootstrap this repo."
+                "\n".join(self.console_state.results) or context.config_error or "Use `/setup` to bootstrap this repo here."
             )
             status.update(
                 f"[b]Repo[/b]\n{context.paths.root}\n\n[b]Status[/b]\n{context.config_error or 'Not initialized'}"
             )
             return
 
+        command_input.placeholder = "/role list"
         roles_panel.set_body(
             "\n".join(
                 f"- {role.name}: q={', '.join(role.query_paths) or '<none>'} | e={', '.join(role.edit_paths) or '<none>'}"
@@ -177,6 +187,13 @@ class ScopedControlApp(App[None]):
         if not command_text:
             return
 
+        normalized = command_text.lstrip("/").strip()
+        if normalized == "setup":
+            self.open_setup_screen()
+            event.input.value = ""
+            self.action_focus_command()
+            return
+
         result = execute_command(self.start_path, command_text)
         self._apply_command_result(result)
         event.input.value = ""
@@ -185,6 +202,51 @@ class ScopedControlApp(App[None]):
     def _apply_command_result(self, result: CommandResult) -> None:
         self.console_state.selected_surface_id = result.selected_surface_id
         self.console_state.record_result(result.command, result.message, result.lines)
+        self.refresh_repo_state()
+
+    def open_setup_screen(self) -> None:
+        self.push_screen(
+            SetupScreen(repo_name=self.start_path.resolve().name),
+            self._handle_setup_submission,
+        )
+
+    def _maybe_prompt_setup(self) -> None:
+        if self.console_state.config_loaded or self._setup_prompted:
+            return
+        self._setup_prompted = True
+        self.open_setup_screen()
+
+    def _handle_setup_submission(self, submission: SetupSubmission | None) -> None:
+        if submission is None:
+            self.console_state.record_result("setup", "Setup canceled.", ())
+            self.refresh_repo_state()
+            return
+        self.run_setup_submission(submission)
+
+    def run_setup_submission(self, submission: SetupSubmission) -> None:
+        try:
+            lines = run_setup(
+                self.start_path,
+                role_name=submission.role_name,
+                description=submission.description,
+                intent=submission.intent,
+                query_paths=(),
+                edit_paths=(),
+                annotate_query_globs=(),
+                annotate_edit_globs=(),
+                planner_executor=submission.planner_executor,
+                auto_annotate_enabled=submission.auto_annotate_enabled,
+                install_github_enabled=submission.install_github_enabled,
+                install_slack_enabled=submission.install_slack_enabled,
+                slack_webhook_env=submission.slack_webhook_env,
+                force_annotations=submission.force_annotations,
+            )
+        except Exception as exc:
+            self.console_state.record_result("setup", f"Setup failed: {exc}", ())
+            self.refresh_repo_state()
+            return
+
+        self.console_state.record_result("setup", "Setup complete.", lines)
         self.refresh_repo_state()
 
 
