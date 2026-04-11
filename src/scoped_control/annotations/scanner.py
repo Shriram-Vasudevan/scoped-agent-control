@@ -103,9 +103,12 @@ def scan_file(path: Path, root: Path) -> tuple[tuple[SurfaceRecord, ...], tuple[
             index = content_index
             continue
 
-        next_annotation_index = _find_next_annotation_start(lines, content_index + 1)
-        stop_index = next_annotation_index if next_annotation_index is not None else len(lines)
-        end_index = infer_surface_span(lines, content_index, stop_index)
+        if "file_scope" in metadata.invariants:
+            end_index = len(lines) - 1
+        else:
+            next_annotation_index = _find_next_annotation_start(lines, content_index + 1)
+            stop_index = next_annotation_index if next_annotation_index is not None else len(lines)
+            end_index = infer_surface_span(lines, content_index, stop_index)
         block_lines = lines[content_index : end_index + 1]
         surfaces.append(
             SurfaceRecord(

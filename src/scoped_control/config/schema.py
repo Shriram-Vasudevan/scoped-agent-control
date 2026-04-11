@@ -7,13 +7,14 @@ from collections.abc import Mapping, Sequence
 from scoped_control.errors import ConfigValidationError
 from scoped_control.models import (
     AppConfig,
+    EmailIntegrationConfig,
     ExecutorConfig,
     ExecutorsConfig,
     GitHubIntegrationConfig,
     IntegrationsConfig,
     LimitsConfig,
     RoleConfig,
-    StubIntegrationConfig,
+    SlackIntegrationConfig,
     ValidatorConfig,
 )
 
@@ -37,8 +38,12 @@ def build_default_config() -> AppConfig:
         validators=(),
         integrations=IntegrationsConfig(
             github=GitHubIntegrationConfig(enabled=False, workflow_path=".github/workflows/scoped-control.yml"),
-            slack=StubIntegrationConfig(enabled=False),
-            email=StubIntegrationConfig(enabled=False),
+            slack=SlackIntegrationConfig(
+                enabled=False,
+                webhook_url_env="SLACK_WEBHOOK_URL",
+                notify_on=("edit_success", "edit_blocked", "remote_edit_success", "remote_edit_blocked"),
+            ),
+            email=EmailIntegrationConfig(enabled=False),
         ),
         limits=LimitsConfig(max_changed_files=5, max_diff_lines=400),
         executors=ExecutorsConfig(
@@ -126,6 +131,8 @@ def config_to_dict(config: AppConfig) -> dict[str, object]:
             },
             "slack": {
                 "enabled": config.integrations.slack.enabled,
+                "webhook_url_env": config.integrations.slack.webhook_url_env,
+                "notify_on": list(config.integrations.slack.notify_on),
             },
             "email": {
                 "enabled": config.integrations.email.enabled,
@@ -214,8 +221,18 @@ def _parse_integrations(raw: object) -> IntegrationsConfig:
             "integrations.github.workflow_path",
         ),
     )
-    slack = StubIntegrationConfig(enabled=_as_bool(slack_data.get("enabled", False), "integrations.slack.enabled"))
-    email = StubIntegrationConfig(enabled=_as_bool(email_data.get("enabled", False), "integrations.email.enabled"))
+    slack = SlackIntegrationConfig(
+        enabled=_as_bool(slack_data.get("enabled", False), "integrations.slack.enabled"),
+        webhook_url_env=_as_string(
+            slack_data.get("webhook_url_env", "SLACK_WEBHOOK_URL"),
+            "integrations.slack.webhook_url_env",
+        ),
+        notify_on=_as_string_tuple(
+            slack_data.get("notify_on", ["edit_success", "edit_blocked", "remote_edit_success", "remote_edit_blocked"]),
+            "integrations.slack.notify_on",
+        ),
+    )
+    email = EmailIntegrationConfig(enabled=_as_bool(email_data.get("enabled", False), "integrations.email.enabled"))
     return IntegrationsConfig(github=github, slack=slack, email=email)
 
 

@@ -7,6 +7,7 @@ from dataclasses import dataclass
 import shlex
 from pathlib import Path
 
+from scoped_control.annotations.inserter import auto_annotate_repo
 from scoped_control.config.loader import check_repo, load_config, repo_paths
 from scoped_control.config.mutator import add_role, remove_role, update_role, write_config
 from scoped_control.enforcement.diff_checks import apply_file_changes, collect_file_changes, enforce_diff_limits
@@ -16,7 +17,8 @@ from scoped_control.executors.base import build_edit_executor, build_query_execu
 from scoped_control.executors.sandbox import prepare_edit_workspace, prepare_query_workspace
 from scoped_control.index.builder import rebuild_index
 from scoped_control.index.store import get_surface, list_surfaces, load_index
-from scoped_control.integrations.installer import install_github, placeholder_install_message
+from scoped_control.integrations.installer import install_github, install_slack, placeholder_install_message
+from scoped_control.integrations.slack import send_slack_notification
 from scoped_control.models import RoleConfig
 from scoped_control.resolver.brief import compile_edit_brief, compile_query_brief, render_edit_brief, render_query_brief
 from scoped_control.resolver.matcher import resolve_edit_surfaces, resolve_query_surfaces
@@ -101,6 +103,9 @@ def execute_args(repo_path: Path, args: argparse.Namespace, *, raw_command: str 
         )
         return CommandResult(command=command_name, ok=True, message=f"Loaded {len(index.surfaces)} surfaces.", lines=lines)
 
+    if args.command == "annotate":
+        return _execute_annotate_command(repo_path, args, command_name)
+
     if args.command == "query":
         return _execute_query_command(repo_path, args, command_name)
 
@@ -171,6 +176,47 @@ def _execute_role_command(repo_path: Path, args: argparse.Namespace, command_nam
         return CommandResult(command=command_name, ok=True, message=f"Removed role `{args.name}`.")
 
     return CommandResult(command=command_name, ok=False, message=f"Unsupported role command: {args.role_command}")
+
+
+def _execute_annotate_command(repo_path: Path, args: argparse.Namespace, command_name: str) -> CommandResult:
+    paths, config = load_config(repo_path)
+    query_globs, edit_globs = _resolve_annotation_globs(
+        config,
+        role_names=tuple(args.role),
+        query_globs=tuple(args.query_glob or ()),
+        edit_globs=tuple(args.edit_glob or ()),
+    )
+    if not query_globs and not edit_globs:
+        return CommandResult(
+            command=command_name,
+            ok=False,
+            message="No annotation targets resolved. Pass --query-glob/--edit-glob or configure role paths first.",
+        )
+    result = auto_annotate_repo(
+        paths.root,
+        roles=tuple(args.role),
+        query_globs=query_globs,
+        edit_globs=edit_globs,
+        force=args.force,
+        dry_run=args.dry_run,
+    )
+    lines = (
+        f"Query globs: {_display_paths(query_globs)}",
+        f"Edit globs: {_display_paths(edit_globs)}",
+        f"Annotated files: {len(result.annotated_files)}",
+        *tuple(f"Annotated: {item}" for item in result.annotated_files),
+        *tuple(f"Skipped: {item}" for item in result.skipped_files),
+        *tuple(f"Warning: {item}" for item in result.warnings),
+    )
+    if not args.dry_run:
+        rebuild_result, _ = rebuild_index(paths.root)
+        lines = (*lines, f"Reindexed surfaces: {len(rebuild_result.index.surfaces)}")
+    return CommandResult(
+        command=command_name,
+        ok=True,
+        message=f"Auto-annotated {len(result.annotated_files)} file(s).",
+        lines=lines,
+    )
 
 
 def _execute_query_command(repo_path: Path, args: argparse.Namespace, command_name: str) -> CommandResult:
@@ -244,6 +290,16 @@ def _execute_edit_command(repo_path: Path, args: argparse.Namespace, command_nam
                 *tuple(f"Blocked: {reason}" for reason in dict.fromkeys(block_reasons)),
                 *tuple(f"Validator {validation.name}: {'ok' if validation.ok else 'failed'}" for validation in validations),
             )
+            notification_status = _notify_slack_if_configured(
+                config,
+                command_name=command_name,
+                repo_path=paths.root,
+                ok=False,
+                message="Edit blocked by deterministic enforcement.",
+                lines=lines,
+            )
+            if notification_status:
+                lines = (*lines, notification_status)
             return CommandResult(command=command_name, ok=False, message="Edit blocked by deterministic enforcement.", lines=lines)
 
         apply_file_changes(paths.root, prepared.root, changes)
@@ -262,6 +318,16 @@ def _execute_edit_command(repo_path: Path, args: argparse.Namespace, command_nam
         "Response:",
         result.output,
     )
+    notification_status = _notify_slack_if_configured(
+        config,
+        command_name=command_name,
+        repo_path=paths.root,
+        ok=True,
+        message=result.summary,
+        lines=lines,
+    )
+    if notification_status:
+        lines = (*lines, notification_status)
     return CommandResult(command=command_name, ok=True, message=result.summary, lines=lines)
 
 
@@ -283,12 +349,20 @@ def _execute_install_command(repo_path: Path, args: argparse.Namespace, command_
             ),
         )
 
-    if args.install_command in {"slack", "email"}:
+    if args.install_command == "slack":
         return CommandResult(
             command=command_name,
             ok=True,
-            message=placeholder_install_message(args.install_command),
+            message="Installed Slack notification wiring.",
+            lines=(
+                f"Config: {install_slack(repo_path, webhook_env=args.webhook_env)}",
+                f"Webhook env: {args.webhook_env}",
+                "Next: set the webhook env var locally or as a GitHub Actions secret.",
+            ),
         )
+
+    if args.install_command == "email":
+        return CommandResult(command=command_name, ok=True, message=placeholder_install_message(args.install_command))
 
     return CommandResult(command=command_name, ok=False, message=f"Unsupported install target: {args.install_command}")
 
@@ -351,12 +425,19 @@ def _build_command_parser() -> _CommandParser:
     subparsers.add_parser("check", add_help=False)
     subparsers.add_parser("scan", add_help=False)
     subparsers.add_parser("index", add_help=False)
+    annotate_parser = subparsers.add_parser("annotate", add_help=False)
+    annotate_parser.add_argument("--role", action="append", required=True)
+    annotate_parser.add_argument("--query-glob", action="append")
+    annotate_parser.add_argument("--edit-glob", action="append")
+    annotate_parser.add_argument("--force", action="store_true")
+    annotate_parser.add_argument("--dry-run", action="store_true")
     install_parser = subparsers.add_parser("install", add_help=False)
     install_commands = install_parser.add_subparsers(dest="install_command", required=True)
     install_github_parser = install_commands.add_parser("github", add_help=False)
     install_github_parser.add_argument("--workflow-path")
     install_github_parser.add_argument("--force", action="store_true")
-    install_commands.add_parser("slack", add_help=False)
+    install_slack_parser = install_commands.add_parser("slack", add_help=False)
+    install_slack_parser.add_argument("--webhook-env", default="SLACK_WEBHOOK_URL")
     install_commands.add_parser("email", add_help=False)
     query_parser = subparsers.add_parser("query", add_help=False)
     query_parser.add_argument("role_name")
@@ -409,9 +490,24 @@ def _display_paths(values: tuple[str, ...]) -> str:
     return ", ".join(values) if values else "<none>"
 
 
+def _resolve_annotation_globs(config, *, role_names: tuple[str, ...], query_globs: tuple[str, ...], edit_globs: tuple[str, ...]) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    if query_globs or edit_globs:
+        return query_globs, edit_globs
+
+    resolved_query: list[str] = []
+    resolved_edit: list[str] = []
+    for role_name in role_names:
+        role = config.get_role(role_name)
+        resolved_query.extend(role.query_paths)
+        resolved_edit.extend(role.edit_paths)
+    return tuple(dict.fromkeys(resolved_query)), tuple(dict.fromkeys(resolved_edit))
+
+
 def _command_label(args: argparse.Namespace) -> str:
     if args.command in {"check", "scan", "index"}:
         return args.command
+    if args.command == "annotate":
+        return "annotate"
     if args.command == "install":
         return f"install {args.install_command}"
     if args.command == "query":
@@ -425,3 +521,30 @@ def _command_label(args: argparse.Namespace) -> str:
     if args.command == "validator":
         return f"validator {args.validator_command}"
     return str(args.command)
+
+
+def _notify_slack_if_configured(
+    config,
+    *,
+    command_name: str,
+    repo_path: Path,
+    ok: bool,
+    message: str,
+    lines: tuple[str, ...],
+) -> str | None:
+    if command_name.startswith("remote-edit"):
+        event_key = "remote_edit_success" if ok else "remote_edit_blocked"
+    else:
+        event_key = "edit_success" if ok else "edit_blocked"
+    try:
+        return send_slack_notification(
+            config,
+            event_key=event_key,
+            repo_root=repo_path,
+            command=command_name,
+            ok=ok,
+            message=message,
+            lines=lines,
+        )
+    except Exception as exc:
+        return f"Slack notification failed: {exc}"

@@ -29,15 +29,22 @@ class GitHubIntegrationConfig:
 
 
 @dataclass(slots=True, frozen=True)
-class StubIntegrationConfig:
+class SlackIntegrationConfig:
+    enabled: bool = False
+    webhook_url_env: str = "SLACK_WEBHOOK_URL"
+    notify_on: tuple[str, ...] = ("edit_success", "edit_blocked", "remote_edit_success", "remote_edit_blocked")
+
+
+@dataclass(slots=True, frozen=True)
+class EmailIntegrationConfig:
     enabled: bool = False
 
 
 @dataclass(slots=True, frozen=True)
 class IntegrationsConfig:
     github: GitHubIntegrationConfig = GitHubIntegrationConfig()
-    slack: StubIntegrationConfig = StubIntegrationConfig()
-    email: StubIntegrationConfig = StubIntegrationConfig()
+    slack: SlackIntegrationConfig = SlackIntegrationConfig()
+    email: EmailIntegrationConfig = EmailIntegrationConfig()
 
 
 @dataclass(slots=True, frozen=True)
