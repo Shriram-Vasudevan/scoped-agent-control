@@ -9,13 +9,17 @@ from pathlib import Path
 
 from scoped_control.config.loader import check_repo, load_config, repo_paths
 from scoped_control.config.mutator import add_role, remove_role, update_role, write_config
-from scoped_control.executors.base import build_query_executor
-from scoped_control.executors.sandbox import prepare_query_workspace
+from scoped_control.enforcement.diff_checks import apply_file_changes, collect_file_changes, enforce_diff_limits
+from scoped_control.enforcement.invariants import collect_edit_precheck_notes
+from scoped_control.enforcement.span_checks import enforce_surface_spans
+from scoped_control.executors.base import build_edit_executor, build_query_executor
+from scoped_control.executors.sandbox import prepare_edit_workspace, prepare_query_workspace
 from scoped_control.index.builder import rebuild_index
 from scoped_control.index.store import get_surface, list_surfaces, load_index
 from scoped_control.models import RoleConfig
-from scoped_control.resolver.brief import compile_query_brief, render_query_brief
-from scoped_control.resolver.matcher import resolve_query_surfaces
+from scoped_control.resolver.brief import compile_edit_brief, compile_query_brief, render_edit_brief, render_query_brief
+from scoped_control.resolver.matcher import resolve_edit_surfaces, resolve_query_surfaces
+from scoped_control.validators.runner import run_validators
 
 
 class _CommandParser(argparse.ArgumentParser):
@@ -98,6 +102,9 @@ def execute_args(repo_path: Path, args: argparse.Namespace, *, raw_command: str 
 
     if args.command == "query":
         return _execute_query_command(repo_path, args, command_name)
+
+    if args.command == "edit":
+        return _execute_edit_command(repo_path, args, command_name)
 
     if args.command == "role":
         return _execute_role_command(repo_path, args, command_name)
@@ -190,6 +197,70 @@ def _execute_query_command(repo_path: Path, args: argparse.Namespace, command_na
     return CommandResult(command=command_name, ok=result.ok, message=result.summary, lines=lines)
 
 
+def _execute_edit_command(repo_path: Path, args: argparse.Namespace, command_name: str) -> CommandResult:
+    paths, config = load_config(repo_path)
+    index = load_index(paths.index_path)
+    role = config.get_role(args.role_name)
+    request = " ".join(args.request_tokens).strip()
+    resolution = resolve_edit_surfaces(role, index, request, top_k=args.top_k)
+    if not resolution.matches:
+        return CommandResult(command=command_name, ok=False, message=f"No edit surfaces matched for role `{role.name}`.")
+
+    brief = compile_edit_brief(paths.root, config, role, request, resolution.matches, resolution.dependency_surfaces)
+    prompt = render_edit_brief(brief)
+    adapter = build_edit_executor(config, args.executor)
+    precheck_notes = collect_edit_precheck_notes(
+        tuple(match.surface for match in resolution.matches),
+        resolution.dependency_surfaces,
+    )
+
+    with prepare_edit_workspace(paths.root, resolution.writable_files) as prepared:
+        result = adapter.run_edit(brief, prompt, prepared.root, resolution.writable_files)
+        changes = collect_file_changes(paths.root, prepared.root)
+        block_reasons = list(enforce_diff_limits(changes, config.limits))
+        block_reasons.extend(
+            enforce_surface_spans(
+                changes,
+                tuple(match.surface for match in resolution.matches),
+                resolution.dependency_surfaces,
+            )
+        )
+        validations = run_validators(config, prepared.root, mode="edit")
+        block_reasons.extend(
+            f"validator failed: {validation.name}"
+            for validation in validations
+            if not validation.ok
+        )
+
+        if block_reasons:
+            lines = (
+                f"Executor: {adapter.name}",
+                f"Sandbox: {prepared.strategy}",
+                *tuple(f"Precheck: {note}" for note in precheck_notes),
+                *tuple(f"Blocked: {reason}" for reason in dict.fromkeys(block_reasons)),
+                *tuple(f"Validator {validation.name}: {'ok' if validation.ok else 'failed'}" for validation in validations),
+            )
+            return CommandResult(command=command_name, ok=False, message="Edit blocked by deterministic enforcement.", lines=lines)
+
+        apply_file_changes(paths.root, prepared.root, changes)
+
+    changed_files = tuple(change.path for change in changes)
+    lines = (
+        f"Executor: {adapter.name}",
+        f"Writable files: {_display_paths(resolution.writable_files)}",
+        f"Changed files: {_display_paths(changed_files)}",
+        *tuple(f"Precheck: {note}" for note in precheck_notes),
+        *tuple(
+            f"Matched {match.surface.id}: {', '.join(match.reasons) or 'fallback within allowed edit scope'}"
+            for match in resolution.matches
+        ),
+        *tuple(f"Validator {validation.name}: {'ok' if validation.ok else 'failed'}" for validation in validations),
+        "Response:",
+        result.output,
+    )
+    return CommandResult(command=command_name, ok=True, message=result.summary, lines=lines)
+
+
 def _execute_surface_command(repo_path: Path, args: argparse.Namespace, command_name: str) -> CommandResult:
     index = load_index(repo_paths(repo_path).index_path)
 
@@ -253,6 +324,11 @@ def _build_command_parser() -> _CommandParser:
     query_parser.add_argument("request_tokens", nargs="+")
     query_parser.add_argument("--executor", choices=("codex", "claude_code", "fake"))
     query_parser.add_argument("--top-k", type=int, default=3)
+    edit_parser = subparsers.add_parser("edit", add_help=False)
+    edit_parser.add_argument("role_name")
+    edit_parser.add_argument("request_tokens", nargs="+")
+    edit_parser.add_argument("--executor", choices=("codex", "claude_code", "fake"))
+    edit_parser.add_argument("--top-k", type=int, default=1)
 
     role_parser = subparsers.add_parser("role", add_help=False)
     role_commands = role_parser.add_subparsers(dest="role_command", required=True)
@@ -299,6 +375,8 @@ def _command_label(args: argparse.Namespace) -> str:
         return args.command
     if args.command == "query":
         return f"query {args.role_name}"
+    if args.command == "edit":
+        return f"edit {args.role_name}"
     if args.command == "role":
         return f"role {args.role_command}"
     if args.command == "surface":
