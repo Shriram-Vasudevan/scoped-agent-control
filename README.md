@@ -1,39 +1,126 @@
-# scoped-control
+# scoped-agent-control
 
-`scoped-control` is a repo-installed control plane for scoped AI query and edit runs. It is not a model runtime. It resolves scope deterministically from local config plus inline surface annotations, compiles compact execution briefs for an external executor, and enforces policy after the executor returns.
+`scoped-agent-control` is a framework for enforcing role-based, scoped AI interactions with a codebase.
 
-## What v1 ships
+It allows teams to define exactly who can read or modify which parts of a repository and under what constraints. Simple inline annotations and a repo-level config enable AI agents such as Claude Code and Codex to operate within approved, role-specific boundaries.
 
-- Textual-first console launched by `scoped-control`
-- repo-local config in `.scoped-control/config.yaml`
-- generated surface index in `.scoped-control/index.json`
-- role-aware `/query` and `/edit` routing
-- deterministic ranking and brief generation
-- local edit sandboxing with post-run diff/span enforcement
-- validator gating before approved edits are applied back to the repo
-- GitHub workflow scaffolding for remote edit execution
+In practice, this enables non-technical users such as recruiters, PMs, and GTM teams to safely make targeted changes without risking unintended or disallowed side effects across the system.
+
+The CLI entrypoint is `scoped-control`.
 
 ## Install
 
+Requirements:
+
+- Python 3.12+
+- `uv`
+
+Install dependencies:
+
 ```bash
 uv sync --dev
+```
+
+Check the CLI:
+
+```bash
 uv run scoped-control --help
 ```
 
-The project expects Python 3.12+.
-
 ## Quick Start
 
+Initialize the repo:
+
 ```bash
-scoped-control init
-scoped-control scan
+scoped-control init --path .
+```
+
+What it does:
+
+- creates `.scoped-control/config.yaml`
+- creates `.scoped-control/index.json`
+- gives you a default `maintainer` role to start from
+
+Add inline annotations to the files you want to expose to AI:
+
+```text
+# surface: prompts.system
+# roles: maintainer, reviewer
+# modes: query, edit
+# invariants: preserve the assistant tone guide
+# depends_on: config.behavior
+```
+
+Build the index from annotations:
+
+```bash
+scoped-control scan --path .
+```
+
+What it does:
+
+- scans the repo for supported annotation lines
+- builds `.scoped-control/index.json`
+- records warnings for malformed annotations or duplicate surface ids
+
+Inspect the configured roles:
+
+```bash
 scoped-control role list --path .
-scoped-control query maintainer "Explain the system prompt" --executor fake --path .
-scoped-control edit maintainer "Change return 1 to return 10" --executor fake --path .
+```
+
+Inspect indexed surfaces:
+
+```bash
+scoped-control surface list --path .
+scoped-control surface show prompts.system --path .
+```
+
+Run a scoped query:
+
+```bash
+scoped-control query maintainer Explain the assistant prompt --executor fake --path .
+```
+
+What it does:
+
+- resolves surfaces the role is allowed to query
+- ranks likely matches deterministically
+- compiles a brief with only the approved file excerpts
+- sends that scoped brief to the selected executor
+
+Run a scoped edit:
+
+```bash
+scoped-control edit maintainer Change return 1 to return 10 --executor fake --path .
+```
+
+What it does:
+
+- resolves surfaces the role is allowed to edit
+- runs the executor in a temporary sandbox
+- blocks edits that exceed file, span, dependency, diff-size, or validator constraints
+- only applies changes back to the repo if all checks pass
+
+Install GitHub remote scaffolding:
+
+```bash
 scoped-control install github --path .
 ```
 
-Running `scoped-control` without a subcommand launches the Textual console. The slash-command surface mirrors the main CLI commands:
+What it does:
+
+- writes `.github/workflows/scoped-control.yml`
+- enables the GitHub integration block in `.scoped-control/config.yaml`
+- sets the repo up so GitHub Actions can invoke `scoped-control remote-edit`
+
+Launch the Textual console:
+
+```bash
+scoped-control
+```
+
+The TUI mirrors the CLI with slash commands such as:
 
 ```text
 /scan
@@ -44,9 +131,20 @@ Running `scoped-control` without a subcommand launches the Textual console. The 
 /install github
 ```
 
+See [examples/demo_repo](examples/demo_repo) for a small working example repo.
+
 ## Annotation Format
 
-Only repeated `#` and `//` comment lines are supported in v1. Consecutive annotation lines attach to the next non-empty, non-annotation line.
+v1 supports only repeated `#` and `//` comment lines.
+
+Rules:
+
+- consecutive annotation lines attach to the next non-empty, non-annotation line
+- the annotated block starts at that next content line
+- the block ends at the next annotation run or a simple inferred boundary
+- malformed annotations produce warnings instead of crashing the scan
+
+Example:
 
 ```text
 # surface: prompts.system
@@ -56,94 +154,15 @@ Only repeated `#` and `//` comment lines are supported in v1. Consecutive annota
 # depends_on: config.behavior
 ```
 
-Supported fields:
+## Supported Fields
 
 - `surface`
+  Defines the surface id for the annotated block.
 - `roles`
+  Lists which roles can access the surface.
 - `modes`
+  Lists whether the surface supports `query`, `edit`, or both.
 - `invariants`
+  Adds human-readable constraints that are included in execution briefs.
 - `depends_on`
-
-## Local Query Flow
-
-`query` resolves surfaces using:
-
-- role path allowlists from `.scoped-control/config.yaml`
-- surface role and mode metadata from the index
-- deterministic lexical ranking by surface id, file name, and keyword overlap
-
-The executor receives only the compiled brief plus scoped file excerpts. For local/demo use, `--executor fake` returns a deterministic synthetic answer. Real adapters are wired for:
-
-- `codex exec`
-- `claude --print`
-
-If a binary is missing, the command fails with setup guidance instead of widening scope.
-
-## Local Edit Flow
-
-`edit` uses the same resolver, then runs the executor inside a temporary sandbox:
-
-- clean git repos use a temporary git worktree
-- dirty or non-git repos fall back to a temporary repo copy
-
-After the executor returns, `scoped-control` deterministically checks:
-
-- changed-file count
-- diff-size limits
-- out-of-scope file edits
-- edits outside indexed surface spans
-- dependency-surface changes
-- configured validators
-
-Only if every gate passes are the approved file changes copied back into the repo.
-
-## GitHub Remote Mode
-
-Install the workflow scaffold:
-
-```bash
-scoped-control install github --path .
-```
-
-That writes `.github/workflows/scoped-control.yml` and enables the GitHub integration block in `.scoped-control/config.yaml`.
-
-The generated workflow uses `workflow_dispatch` inputs:
-
-- `role`
-- `request`
-- `executor`
-- `top_k`
-
-It calls:
-
-```bash
-scoped-control remote-edit --path . --event-file "$GITHUB_EVENT_PATH"
-```
-
-Secrets to provide on GitHub:
-
-- `OPENAI_API_KEY` for Codex-backed runs
-- `ANTHROPIC_API_KEY` for Claude Code-backed runs
-
-Slack and email installers are intentionally placeholders in v1 and point back to the GitHub workflow path.
-
-## Demo Repo
-
-See [examples/demo_repo](examples/demo_repo) for a tiny annotated prompt/config repo with a prebuilt `.scoped-control` directory.
-
-## Test Surface
-
-The suite covers:
-
-- config/bootstrap validation
-- annotation parsing and index generation
-- CLI and TUI command routing
-- fake-executor query flow
-- sandboxed edit success and deterministic blocking paths
-- GitHub installer and remote-edit scaffolding
-
-Run everything with:
-
-```bash
-uv run pytest -q
-```
+  Declares related surfaces that may be included as read-only context.
