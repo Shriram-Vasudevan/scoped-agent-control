@@ -29,10 +29,17 @@ def build_parser() -> argparse.ArgumentParser:
     setup_parser.add_argument("--path", type=Path, default=Path.cwd(), help="Repo root or nested path to inspect")
     setup_parser.add_argument("--role", help="Role name to create or update")
     setup_parser.add_argument("--description", help="Role description")
+    setup_parser.add_argument("--intent", help="Plain-English description of what this role should generally be able to do")
     setup_parser.add_argument("--query-path", action="append", help="Repo path glob this role may read")
     setup_parser.add_argument("--edit-path", action="append", help="Repo path glob this role may edit")
     setup_parser.add_argument("--annotate-query-glob", action="append", help="File glob to auto-annotate for query access")
     setup_parser.add_argument("--annotate-edit-glob", action="append", help="File glob to auto-annotate for edit access")
+    setup_parser.add_argument(
+        "--planner-executor",
+        choices=("auto", "heuristic", "codex", "claude_code"),
+        default="auto",
+        help="Planner used when inferring scope from --intent",
+    )
     setup_parser.add_argument("--skip-annotate", action="store_true", help="Skip automatic annotation insertion")
     setup_parser.add_argument("--force-annotations", action="store_true", help="Replace detected file annotations when auto-annotating")
     setup_parser.add_argument("--install-github", action="store_true", help="Install the GitHub Actions remote-edit workflow")
@@ -47,6 +54,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     index_parser = subparsers.add_parser("index", help="Show the stored surface index summary")
     index_parser.add_argument("--path", type=Path, default=Path.cwd(), help="Repo root or nested path to inspect")
+
+    cleanup_parser = subparsers.add_parser("cleanup", help="Remove scoped-control-managed annotations and repo artifacts")
+    cleanup_parser.add_argument("--path", type=Path, default=Path.cwd(), help="Repo root or nested path to inspect")
+    cleanup_parser.add_argument("--dry-run", action="store_true", help="Preview what would be removed")
+    cleanup_parser.add_argument("--force", action="store_true", help="Apply the destructive cleanup")
 
     annotate_parser = subparsers.add_parser("annotate", help="Auto-insert file-level annotations from role paths or explicit globs")
     annotate_parser.add_argument("--path", type=Path, default=Path.cwd(), help="Repo root or nested path to inspect")
@@ -136,7 +148,7 @@ def main(argv: list[str] | None = None) -> int:
             return _run_tui(args.path)
         if args.command == "remote-edit":
             return _run_remote_edit(args)
-        if args.command in {"check", "scan", "index", "annotate", "install", "query", "edit", "role", "surface", "validator"}:
+        if args.command in {"check", "scan", "index", "cleanup", "annotate", "install", "query", "edit", "role", "surface", "validator"}:
             return _run_shared_command(args)
         return _run_no_command(parser)
     except ScopedControlError as exc:
@@ -167,28 +179,22 @@ def _run_init(path: Path, force: bool) -> int:
 
 def _run_setup(args: argparse.Namespace) -> int:
     guided = _stdin_isatty() and (
-        args.role is None or args.description is None or args.query_path is None or args.edit_path is None
+        args.role is None or args.description is None or (args.intent is None and args.query_path is None and args.edit_path is None)
     )
 
     role_name = args.role or _prompt_text("Role name", "maintainer", enabled=guided)
     description_default = f"Scoped operator for {args.path.resolve().name}."
     description = args.description or _prompt_text("Role description", description_default, enabled=guided)
+    intent = args.intent or ""
 
     query_paths = tuple(args.query_path or ())
-    if not query_paths:
-        query_paths = _prompt_list(
-            "Files this role can read (comma-separated globs)",
-            ("**/*",),
-            enabled=guided,
-        )
-        if not query_paths:
-            query_paths = ("**/*",)
-
     edit_paths = tuple(args.edit_path or ())
-    if not edit_paths:
-        edit_paths = _prompt_list(
-            "Files this role can edit (comma-separated globs)",
-            (),
+    using_explicit_paths = bool(query_paths or edit_paths)
+    if not using_explicit_paths:
+        intent_default = f"{role_name} should be able to work on the relevant parts of this project."
+        intent = intent or _prompt_text(
+            "What should this role generally be allowed to do?",
+            intent_default,
             enabled=guided,
         )
 
@@ -198,7 +204,7 @@ def _run_setup(args: argparse.Namespace) -> int:
 
     annotate_query_globs = tuple(args.annotate_query_glob or query_paths)
     annotate_edit_globs = tuple(args.annotate_edit_glob or edit_paths)
-    if guided and auto_annotate_enabled:
+    if guided and auto_annotate_enabled and using_explicit_paths:
         if args.annotate_query_glob is None:
             annotate_query_globs = _prompt_list(
                 "Query files to annotate (defaults to query paths)",
@@ -232,10 +238,12 @@ def _run_setup(args: argparse.Namespace) -> int:
         args.path,
         role_name=role_name,
         description=description,
+        intent=intent or None,
         query_paths=query_paths,
         edit_paths=edit_paths,
         annotate_query_globs=annotate_query_globs if auto_annotate_enabled else (),
         annotate_edit_globs=annotate_edit_globs if auto_annotate_enabled else (),
+        planner_executor=args.planner_executor,
         auto_annotate_enabled=auto_annotate_enabled,
         install_github_enabled=install_github_enabled,
         install_slack_enabled=install_slack_enabled,

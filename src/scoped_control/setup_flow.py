@@ -10,6 +10,7 @@ from scoped_control.config.mutator import add_role, update_role, write_config
 from scoped_control.index.builder import rebuild_index
 from scoped_control.integrations.installer import install_github, install_slack
 from scoped_control.models import RoleConfig
+from scoped_control.setup_planner import PlannedRoleScope, plan_role_scope
 
 
 def run_setup(
@@ -17,10 +18,12 @@ def run_setup(
     *,
     role_name: str,
     description: str,
+    intent: str | None,
     query_paths: tuple[str, ...],
     edit_paths: tuple[str, ...],
     annotate_query_globs: tuple[str, ...],
     annotate_edit_globs: tuple[str, ...],
+    planner_executor: str,
     auto_annotate_enabled: bool,
     install_github_enabled: bool,
     install_slack_enabled: bool,
@@ -31,6 +34,29 @@ def run_setup(
 
     paths = bootstrap_repo(repo_path, overwrite=False)
     _, config = load_config(paths.root)
+    planning_result: PlannedRoleScope | None = None
+
+    if not query_paths and not edit_paths:
+        if not intent or not intent.strip():
+            raise ValueError("Setup needs either explicit --query-path/--edit-path values or a plain-English --intent.")
+        planning_result = plan_role_scope(
+            paths.root,
+            config=config,
+            role_name=role_name,
+            description=description,
+            intent=intent,
+            planner_executor=planner_executor,
+        )
+        query_paths = planning_result.query_paths
+        edit_paths = planning_result.edit_paths
+        if not annotate_query_globs:
+            annotate_query_globs = planning_result.annotate_query_globs
+        if not annotate_edit_globs:
+            annotate_edit_globs = planning_result.annotate_edit_globs
+
+    if auto_annotate_enabled and not annotate_query_globs and not annotate_edit_globs:
+        annotate_query_globs = query_paths
+        annotate_edit_globs = edit_paths
 
     role = RoleConfig(
         name=role_name,
@@ -63,6 +89,14 @@ def run_setup(
     step_number += 1
     lines.append(f"Step {step_number}: configured role `{role.name}`")
     step_number += 1
+    if planning_result is not None:
+        lines.append(f"Step {step_number}: planned role scope via `{planning_result.planner}`")
+        lines.append(f"Query paths: {', '.join(planning_result.query_paths) or '<none>'}")
+        lines.append(f"Edit paths: {', '.join(planning_result.edit_paths) or '<none>'}")
+        if planning_result.reasoning:
+            lines.append("Planner reasoning:")
+            lines.extend(f"- {item}" for item in planning_result.reasoning)
+        step_number += 1
     if annotation_result is None:
         lines.append(f"Step {step_number}: skipped auto-annotation")
     else:
@@ -88,6 +122,6 @@ def run_setup(
 
     lines.append("Next commands:")
     lines.append(f"- scoped-control surface list --path {paths.root}")
-    lines.append(f"- scoped-control query {role.name} Explain the indexed surfaces --executor fake --path {paths.root}")
-    lines.append(f"- scoped-control edit {role.name} Change one approved file --executor fake --path {paths.root}")
+    lines.append(f"- scoped-control query {role.name} Explain the indexed surfaces --executor codex --path {paths.root}")
+    lines.append(f"- scoped-control edit {role.name} Change one approved file --executor codex --path {paths.root}")
     return tuple(lines)
