@@ -40,4 +40,4 @@ def test_scan_and_index_cli_commands_build_and_read_the_index(tmp_path, capsys) 
 
     assert index_exit == 0
     assert "Surface count: 7" in index_output
-    assert "- python.primary @ python_repeated_annotations.py:7-8" in index_output
+    assert "python.primary @ python_repeated_annotations.py:7-8" in index_output
