@@ -1,0 +1,1 @@
+"""Deterministic enforcement helpers."""
