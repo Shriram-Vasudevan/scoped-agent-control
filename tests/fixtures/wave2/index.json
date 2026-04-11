@@ -1,0 +1,126 @@
+{
+  "root": "tests/fixtures/wave2",
+  "surfaces": [
+    {
+      "depends_on": [
+        "shared.helpers"
+      ],
+      "file": "python_repeated_annotations.py",
+      "hash": "python-primary-hash",
+      "id": "python.primary",
+      "invariants": [
+        "keep main entry stable"
+      ],
+      "line_end": 8,
+      "line_start": 7,
+      "modes": [
+        "query",
+        "edit"
+      ],
+      "roles": [
+        "maintainer",
+        "reviewer"
+      ]
+    },
+    {
+      "depends_on": [
+        "python.primary"
+      ],
+      "file": "python_repeated_annotations.py",
+      "hash": "python-secondary-hash",
+      "id": "python.secondary",
+      "invariants": [
+        "no writes"
+      ],
+      "line_end": 18,
+      "line_start": 17,
+      "modes": [
+        "query"
+      ],
+      "roles": [
+        "reviewer"
+      ]
+    },
+    {
+      "depends_on": [
+        "shared.helpers"
+      ],
+      "file": "typescript_repeated_annotations.ts",
+      "hash": "typescript-primary-hash",
+      "id": "typescript.primary",
+      "invariants": [
+        "keep main entry stable"
+      ],
+      "line_end": 9,
+      "line_start": 7,
+      "modes": [
+        "query",
+        "edit"
+      ],
+      "roles": [
+        "maintainer"
+      ]
+    },
+    {
+      "depends_on": [
+        "typescript.primary"
+      ],
+      "file": "typescript_repeated_annotations.ts",
+      "hash": "typescript-secondary-hash",
+      "id": "typescript.secondary",
+      "invariants": [
+        "no writes"
+      ],
+      "line_end": 19,
+      "line_start": 17,
+      "modes": [
+        "query"
+      ],
+      "roles": [
+        "reviewer"
+      ]
+    },
+    {
+      "depends_on": [
+        "reference.guide"
+      ],
+      "file": "plain_text_repeated_annotations.txt",
+      "hash": "plaintext-primary-hash",
+      "id": "plaintext.primary",
+      "invariants": [
+        "preserve exact wording"
+      ],
+      "line_end": 7,
+      "line_start": 7,
+      "modes": [
+        "query"
+      ],
+      "roles": [
+        "maintainer"
+      ]
+    },
+    {
+      "depends_on": [
+        "plaintext.primary"
+      ],
+      "file": "plain_text_repeated_annotations.txt",
+      "hash": "plaintext-secondary-hash",
+      "id": "plaintext.secondary",
+      "invariants": [
+        "preserve exact wording"
+      ],
+      "line_end": 16,
+      "line_start": 16,
+      "modes": [
+        "edit"
+      ],
+      "roles": [
+        "reviewer"
+      ]
+    }
+  ],
+  "warnings": [
+    "duplicate surface id: shared.duplicate in malformed_and_duplicate.py",
+    "malformed annotation block missing surface id in malformed_and_duplicate.py"
+  ]
+}

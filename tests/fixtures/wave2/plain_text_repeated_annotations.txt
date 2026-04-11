@@ -1,0 +1,16 @@
+# surface: plaintext.primary
+# roles: maintainer
+# modes: query
+# invariants: preserve exact wording
+# depends_on: reference.guide
+
+Plain text body paragraph one.
+
+
+# surface: plaintext.secondary
+# roles: reviewer
+# modes: edit
+# invariants: preserve exact wording
+# depends_on: plaintext.primary
+
+Plain text body paragraph two.
