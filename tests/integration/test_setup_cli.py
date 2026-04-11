@@ -23,17 +23,18 @@ def test_setup_cli_bootstraps_role_and_auto_annotations(tmp_path, capsys) -> Non
             "pm",
             "--description",
             "Product role",
-            "--query-path",
-            "docs/**",
-            "--edit-path",
-            "docs/**",
+            "--intent",
+            "PM can update product docs in the docs folder.",
+            "--planner-executor",
+            "heuristic",
         ]
     )
 
     captured = capsys.readouterr()
     assert exit_code == 0
     assert "Setup complete." in captured.out
-    assert "Step 3: auto-annotated 1 file(s)" in captured.out
+    assert "planned role scope via `heuristic`" in captured.out
+    assert "Step 4: auto-annotated 1 file(s)" in captured.out
 
     _, config = load_config(repo_root)
     role = config.get_role("pm")
@@ -66,11 +67,8 @@ def test_setup_cli_runs_guided_prompts(tmp_path, capsys, monkeypatch) -> None:
         (
             "recruiter",
             "",
-            "prompts/**",
-            "prompts/**",
+            "Recruiter can update prompt copy and related markdown in the prompts folder.",
             "yes",
-            "",
-            "",
             "no",
             "no",
             "no",
@@ -80,7 +78,7 @@ def test_setup_cli_runs_guided_prompts(tmp_path, capsys, monkeypatch) -> None:
     monkeypatch.setattr("builtins.input", lambda _prompt: next(responses))
     monkeypatch.setattr("scoped_control.cli._stdin_isatty", lambda: True)
 
-    exit_code = main(["setup", "--path", str(repo_root)])
+    exit_code = main(["setup", "--path", str(repo_root), "--planner-executor", "heuristic"])
 
     captured = capsys.readouterr()
     assert exit_code == 0

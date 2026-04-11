@@ -44,8 +44,7 @@ scoped-control setup --path .
 This is the main onboarding flow. It walks you through:
 
 - the role name
-- which files that role can read
-- which files that role can edit
+- what that role should generally be allowed to do
 - whether to auto-insert annotations
 - whether to install the GitHub workflow
 - whether to enable Slack notifications
@@ -55,24 +54,31 @@ What `setup` does in one pass:
 - creates `.scoped-control/config.yaml`
 - creates `.scoped-control/index.json`
 - creates or updates the role you define
-- auto-inserts file annotations for the globs you approve
+- scans the repository
+- infers read and edit scope from your plain-English role intent
+- auto-inserts annotations across the matched parts of the project
 - rebuilds the surface index
 - optionally installs GitHub and Slack wiring
 
-### 2. Use the non-interactive setup form when you already know the role
+### 2. Use the non-interactive setup form when you already know the role intent
 
 ```bash
 scoped-control setup \
   --path . \
   --role recruiter \
   --description "Recruiting copy editor" \
-  --query-path "careers/**" \
-  --edit-path "careers/**" \
+  --intent "Recruiter can update careers copy, role descriptions, and related hiring docs, but should not modify core product code." \
   --install-github \
   --install-slack
 ```
 
-If you skip `--annotate-query-glob` and `--annotate-edit-glob`, `setup` uses the role paths you already provided.
+By default, `setup` uses a planner to infer scope from `--intent`. On machines with Codex or Claude Code installed, it will use a real planner automatically. You can also pin the planner explicitly:
+
+```bash
+scoped-control setup --path . --role recruiter --intent "..." --planner-executor codex
+```
+
+If you still want to override the scope manually, `--query-path` and `--edit-path` remain available.
 
 ### 3. Inspect what was indexed
 
@@ -84,7 +90,7 @@ scoped-control surface show careers.openings --path .
 ### 4. Run a scoped query
 
 ```bash
-scoped-control query recruiter Explain the careers page copy --executor fake --path .
+scoped-control query recruiter Explain the careers page copy --executor codex --path .
 ```
 
 What this does:
@@ -97,7 +103,7 @@ What this does:
 ### 5. Run a scoped edit
 
 ```bash
-scoped-control edit recruiter Update the job intro copy --executor fake --path .
+scoped-control edit recruiter Update the job intro copy --executor codex --path .
 ```
 
 What this does:
@@ -115,12 +121,33 @@ scoped-control annotate --role recruiter --path .
 
 If you omit `--query-glob` and `--edit-glob`, `annotate` derives them from the role’s configured `query_paths` and `edit_paths`.
 
+### 7. Remove scoped-control artifacts in one shot
+
+```bash
+scoped-control cleanup --path . --dry-run
+scoped-control cleanup --path . --force
+```
+
+`cleanup` removes the repo artifacts that scoped-control created:
+
+- auto-generated top-of-file annotations
+- `.scoped-control/config.yaml` and `.scoped-control/index.json` by deleting `.scoped-control/`
+- the installed GitHub workflow file
+
+Use `--dry-run` to preview the cleanup and `--force` to apply it.
+
 ## Command Guide
 
 - `scoped-control setup --path .`
   Guided bootstrap. This should be the first command you run in a new repo.
+- `scoped-control setup --path . --role <role> --intent "<plain-English capability description>"`
+  Non-interactive project-wide setup from general role intent.
 - `scoped-control annotate --role <role> --path .`
   Auto-inserts file-level annotations and rebuilds the index.
+- `scoped-control cleanup --path . --dry-run`
+  Previews removal of generated annotations, `.scoped-control/`, and the installed workflow.
+- `scoped-control cleanup --path . --force`
+  Applies the destructive cleanup.
 - `scoped-control scan --path .`
   Rebuilds the index from the current annotations on disk.
 - `scoped-control role list --path .`
@@ -133,9 +160,9 @@ If you omit `--query-glob` and `--edit-glob`, `annotate` derives them from the r
   Lists indexed surfaces.
 - `scoped-control surface show <surface-id> --path .`
   Shows one indexed surface in detail.
-- `scoped-control query <role> <request> --executor fake --path .`
+- `scoped-control query <role> <request> --executor codex --path .`
   Runs a scoped read-only request.
-- `scoped-control edit <role> <request> --executor fake --path .`
+- `scoped-control edit <role> <request> --executor codex --path .`
   Runs a scoped edit with deterministic enforcement.
 - `scoped-control install github --path .`
   Writes the GitHub Actions remote-edit workflow.
