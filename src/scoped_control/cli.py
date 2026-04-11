@@ -29,6 +29,13 @@ def build_parser() -> argparse.ArgumentParser:
     index_parser = subparsers.add_parser("index", help="Show the stored surface index summary")
     index_parser.add_argument("--path", type=Path, default=Path.cwd(), help="Repo root or nested path to inspect")
 
+    query_parser = subparsers.add_parser("query", help="Run a read-only scoped query")
+    query_parser.add_argument("role_name")
+    query_parser.add_argument("request_tokens", nargs="+")
+    query_parser.add_argument("--executor", choices=("codex", "claude_code", "fake"))
+    query_parser.add_argument("--top-k", type=int, default=3)
+    query_parser.add_argument("--path", type=Path, default=Path.cwd(), help="Repo root or nested path to inspect")
+
     role_parser = subparsers.add_parser("role", help="Manage roles in config.yaml")
     role_subparsers = role_parser.add_subparsers(dest="role_command", required=True)
     role_list = role_subparsers.add_parser("list", help="List configured roles")
@@ -72,7 +79,7 @@ def main(argv: list[str] | None = None) -> int:
             return _run_init(args.path, args.force)
         if args.command == "tui":
             return _run_tui(args.path)
-        if args.command in {"check", "scan", "index", "role", "surface", "validator"}:
+        if args.command in {"check", "scan", "index", "query", "role", "surface", "validator"}:
             return _run_shared_command(args)
         return _run_tui(Path.cwd())
     except ScopedControlError as exc:

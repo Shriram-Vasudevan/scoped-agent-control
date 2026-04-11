@@ -115,6 +115,17 @@ class ExecutionBrief:
     invariants: tuple[str, ...] = ()
     validators: tuple[str, ...] = ()
     notes: tuple[str, ...] = ()
+    file_contexts: tuple["FileContext", ...] = ()
+
+
+@dataclass(slots=True, frozen=True)
+class FileContext:
+    path: str
+    kind: str
+    excerpt: str
+    line_start: int
+    line_end: int
+    surface_ids: tuple[str, ...] = ()
 
 
 @dataclass(slots=True, frozen=True)
