@@ -1,10 +1,10 @@
 # scoped-agent-control
 
-`scoped-agent-control` is a framework for enforcing role-based, scoped AI interactions with a codebase.
+scoped-agent-control is a framework for enforcing role-based, scoped AI interactions with a codebase.
 
-It allows teams to define exactly who can read or modify which parts of a repository and under what constraints. Simple inline annotations and a repo-level config enable AI agents such as Claude Code and Codex to operate within approved, role-specific boundaries.
+It allows teams to define exactly who can read or modify which parts of a repository and under what constraints. Simple inline annotations and a repo-level config enable AI agents (e.g. Claude Code, Codex, etc.) to operate within approved, role-specific boundaries.
 
-In practice, this enables non-technical users such as recruiters, PMs, and GTM teams to safely make targeted changes without risking unintended or disallowed side effects across the system.
+In practice, this enables non-technical users (e.g. PMs, GTM, etc.) to safely make targeted changes without risking unintended or disallowed side effects across the system.
 
 The main entrypoint is the `scoped-control` CLI. The TUI is optional and available through `scoped-control tui`.
 
