@@ -1,6 +1,6 @@
 # scoped-agent-control
 
-`scoped-agent-control` is a framework for enforcing role-based, scoped AI interactions with a codebase.
+scoped-agent-control is a framework for enforcing role-based, scoped AI interactions with a codebase.
 
 It allows teams to define exactly who can read or modify which parts of a repository and under what constraints. Simple inline annotations and a repo-level config enable AI agents such as Claude Code and Codex to operate within approved, role-specific boundaries.
 
