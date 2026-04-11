@@ -61,3 +61,18 @@ def load_index(path: Path) -> IndexRecord:
         for item in raw.get("surfaces", [])
     )
     return IndexRecord(root=raw.get("root", ""), surfaces=surfaces, warnings=tuple(raw.get("warnings", [])))
+
+
+def list_surfaces(index: IndexRecord) -> tuple[SurfaceRecord, ...]:
+    """Return surfaces in stable display order."""
+
+    return tuple(sorted(index.surfaces, key=lambda surface: (surface.file, surface.line_start, surface.id)))
+
+
+def get_surface(index: IndexRecord, surface_id: str) -> SurfaceRecord | None:
+    """Return one surface by id if present."""
+
+    for surface in index.surfaces:
+        if surface.id == surface_id:
+            return surface
+    return None
