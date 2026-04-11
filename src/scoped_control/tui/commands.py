@@ -16,6 +16,7 @@ from scoped_control.executors.base import build_edit_executor, build_query_execu
 from scoped_control.executors.sandbox import prepare_edit_workspace, prepare_query_workspace
 from scoped_control.index.builder import rebuild_index
 from scoped_control.index.store import get_surface, list_surfaces, load_index
+from scoped_control.integrations.installer import install_github, placeholder_install_message
 from scoped_control.models import RoleConfig
 from scoped_control.resolver.brief import compile_edit_brief, compile_query_brief, render_edit_brief, render_query_brief
 from scoped_control.resolver.matcher import resolve_edit_surfaces, resolve_query_surfaces
@@ -105,6 +106,9 @@ def execute_args(repo_path: Path, args: argparse.Namespace, *, raw_command: str 
 
     if args.command == "edit":
         return _execute_edit_command(repo_path, args, command_name)
+
+    if args.command == "install":
+        return _execute_install_command(repo_path, args, command_name)
 
     if args.command == "role":
         return _execute_role_command(repo_path, args, command_name)
@@ -261,6 +265,34 @@ def _execute_edit_command(repo_path: Path, args: argparse.Namespace, command_nam
     return CommandResult(command=command_name, ok=True, message=result.summary, lines=lines)
 
 
+def _execute_install_command(repo_path: Path, args: argparse.Namespace, command_name: str) -> CommandResult:
+    if args.install_command == "github":
+        config_path, workflow_file = install_github(
+            repo_path,
+            workflow_path=args.workflow_path,
+            force=args.force,
+        )
+        return CommandResult(
+            command=command_name,
+            ok=True,
+            message="Installed GitHub remote-edit scaffolding.",
+            lines=(
+                f"Config: {config_path}",
+                f"Workflow: {workflow_file}",
+                "Next: add OPENAI_API_KEY and/or ANTHROPIC_API_KEY repository secrets before running the workflow.",
+            ),
+        )
+
+    if args.install_command in {"slack", "email"}:
+        return CommandResult(
+            command=command_name,
+            ok=True,
+            message=placeholder_install_message(args.install_command),
+        )
+
+    return CommandResult(command=command_name, ok=False, message=f"Unsupported install target: {args.install_command}")
+
+
 def _execute_surface_command(repo_path: Path, args: argparse.Namespace, command_name: str) -> CommandResult:
     index = load_index(repo_paths(repo_path).index_path)
 
@@ -319,6 +351,13 @@ def _build_command_parser() -> _CommandParser:
     subparsers.add_parser("check", add_help=False)
     subparsers.add_parser("scan", add_help=False)
     subparsers.add_parser("index", add_help=False)
+    install_parser = subparsers.add_parser("install", add_help=False)
+    install_commands = install_parser.add_subparsers(dest="install_command", required=True)
+    install_github_parser = install_commands.add_parser("github", add_help=False)
+    install_github_parser.add_argument("--workflow-path")
+    install_github_parser.add_argument("--force", action="store_true")
+    install_commands.add_parser("slack", add_help=False)
+    install_commands.add_parser("email", add_help=False)
     query_parser = subparsers.add_parser("query", add_help=False)
     query_parser.add_argument("role_name")
     query_parser.add_argument("request_tokens", nargs="+")
@@ -373,6 +412,8 @@ def _display_paths(values: tuple[str, ...]) -> str:
 def _command_label(args: argparse.Namespace) -> str:
     if args.command in {"check", "scan", "index"}:
         return args.command
+    if args.command == "install":
+        return f"install {args.install_command}"
     if args.command == "query":
         return f"query {args.role_name}"
     if args.command == "edit":

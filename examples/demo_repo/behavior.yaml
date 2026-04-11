@@ -1,0 +1,8 @@
+# surface: config.behavior
+# roles: maintainer, reviewer
+# modes: query
+# invariants: do not remove the audience field
+
+assistant:
+  audience: engineers
+  tone: concise
