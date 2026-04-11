@@ -9,9 +9,13 @@ from pathlib import Path
 
 from scoped_control.config.loader import check_repo, load_config, repo_paths
 from scoped_control.config.mutator import add_role, remove_role, update_role, write_config
+from scoped_control.executors.base import build_query_executor
+from scoped_control.executors.sandbox import prepare_query_workspace
 from scoped_control.index.builder import rebuild_index
 from scoped_control.index.store import get_surface, list_surfaces, load_index
 from scoped_control.models import RoleConfig
+from scoped_control.resolver.brief import compile_query_brief, render_query_brief
+from scoped_control.resolver.matcher import resolve_query_surfaces
 
 
 class _CommandParser(argparse.ArgumentParser):
@@ -92,6 +96,9 @@ def execute_args(repo_path: Path, args: argparse.Namespace, *, raw_command: str 
         )
         return CommandResult(command=command_name, ok=True, message=f"Loaded {len(index.surfaces)} surfaces.", lines=lines)
 
+    if args.command == "query":
+        return _execute_query_command(repo_path, args, command_name)
+
     if args.command == "role":
         return _execute_role_command(repo_path, args, command_name)
 
@@ -155,6 +162,34 @@ def _execute_role_command(repo_path: Path, args: argparse.Namespace, command_nam
     return CommandResult(command=command_name, ok=False, message=f"Unsupported role command: {args.role_command}")
 
 
+def _execute_query_command(repo_path: Path, args: argparse.Namespace, command_name: str) -> CommandResult:
+    paths, config = load_config(repo_path)
+    index = load_index(paths.index_path)
+    role = config.get_role(args.role_name)
+    request = " ".join(args.request_tokens).strip()
+    resolution = resolve_query_surfaces(role, index, request, top_k=args.top_k)
+    if not resolution.matches:
+        return CommandResult(command=command_name, ok=False, message=f"No query surfaces matched for role `{role.name}`.")
+
+    brief = compile_query_brief(paths.root, config, role, request, resolution.matches, resolution.dependency_surfaces)
+    adapter = build_query_executor(config, args.executor)
+    prompt = render_query_brief(brief)
+    with prepare_query_workspace(brief) as workspace:
+        result = adapter.run_query(brief, prompt, workspace)
+
+    lines = (
+        f"Executor: {adapter.name}",
+        f"Allowed files: {_display_paths(brief.allowed_files)}",
+        *tuple(
+            f"Matched {match.surface.id}: {', '.join(match.reasons) or 'fallback within allowed query scope'}"
+            for match in resolution.matches
+        ),
+        "Response:",
+        result.output,
+    )
+    return CommandResult(command=command_name, ok=result.ok, message=result.summary, lines=lines)
+
+
 def _execute_surface_command(repo_path: Path, args: argparse.Namespace, command_name: str) -> CommandResult:
     index = load_index(repo_paths(repo_path).index_path)
 
@@ -213,6 +248,11 @@ def _build_command_parser() -> _CommandParser:
     subparsers.add_parser("check", add_help=False)
     subparsers.add_parser("scan", add_help=False)
     subparsers.add_parser("index", add_help=False)
+    query_parser = subparsers.add_parser("query", add_help=False)
+    query_parser.add_argument("role_name")
+    query_parser.add_argument("request_tokens", nargs="+")
+    query_parser.add_argument("--executor", choices=("codex", "claude_code", "fake"))
+    query_parser.add_argument("--top-k", type=int, default=3)
 
     role_parser = subparsers.add_parser("role", add_help=False)
     role_commands = role_parser.add_subparsers(dest="role_command", required=True)
@@ -257,6 +297,8 @@ def _display_paths(values: tuple[str, ...]) -> str:
 def _command_label(args: argparse.Namespace) -> str:
     if args.command in {"check", "scan", "index"}:
         return args.command
+    if args.command == "query":
+        return f"query {args.role_name}"
     if args.command == "role":
         return f"role {args.role_command}"
     if args.command == "surface":
