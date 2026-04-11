@@ -51,3 +51,38 @@ class CodexExecutor(ExecutorAdapter):
 
         output = output_path.read_text(encoding="utf-8").strip() if output_path.exists() else completed.stdout.strip()
         return RunResult(kind="query", ok=True, summary="Query completed via codex.", output=output)
+
+    def run_edit(self, brief: ExecutionBrief, prompt: str, workspace: Path, writable_files: tuple[str, ...]) -> RunResult:
+        binary = self.config.command[0] if self.config.command else "codex"
+        if shutil.which(binary) is None:
+            raise CommandExecutionError("Codex CLI is not installed. Install Codex or use `--executor fake`.")
+
+        output_path = workspace / "codex-last-message.txt"
+        command = [
+            *self.config.command,
+            *self.config.edit_args,
+            "--skip-git-repo-check",
+            "--sandbox",
+            "workspace-write",
+            "--cd",
+            str(workspace),
+            "--ephemeral",
+            "--output-last-message",
+            str(output_path),
+            "-",
+        ]
+        completed = subprocess.run(
+            command,
+            input=prompt,
+            text=True,
+            capture_output=True,
+            cwd=workspace,
+            check=False,
+        )
+        if completed.returncode != 0:
+            raise CommandExecutionError(
+                completed.stderr.strip() or completed.stdout.strip() or "Codex edit command failed."
+            )
+
+        output = output_path.read_text(encoding="utf-8").strip() if output_path.exists() else completed.stdout.strip()
+        return RunResult(kind="edit", ok=True, summary="Edit completed via codex.", output=output)
