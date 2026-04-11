@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "scoped-control"
+version = "0.1.0"
+description = "Repo-installed control plane for scoped AI query/edit operations."
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+  "PyYAML>=6.0.1",
+  "textual>=0.85.2",
+]
+
+[project.scripts]
+scoped-control = "scoped_control.cli:main"
+
+[dependency-groups]
+dev = [
+  "pytest>=9.0.0",
+]
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
