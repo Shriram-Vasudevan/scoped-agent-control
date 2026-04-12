@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from scoped_control.annotations.inserter import auto_annotate_repo
+from scoped_control.annotations.semantic_inserter import semantic_annotate_repo
 from scoped_control.config.loader import bootstrap_repo, load_config
 from scoped_control.config.mutator import add_role, update_role, write_config
 from scoped_control.index.builder import rebuild_index
@@ -29,6 +30,9 @@ def run_setup(
     install_slack_enabled: bool,
     slack_webhook_env: str,
     force_annotations: bool,
+    read_intent: str | None = None,
+    write_intent: str | None = None,
+    semantic_annotations: bool = False,
 ) -> tuple[str, ...]:
     """Bootstrap and configure a repo in one guided pass."""
 
@@ -37,14 +41,19 @@ def run_setup(
     planning_result: PlannedRoleScope | None = None
 
     if not query_paths and not edit_paths:
-        if not intent or not intent.strip():
-            raise ValueError("Setup needs either explicit --query-path/--edit-path values or a plain-English --intent.")
+        if (not intent or not intent.strip()) and not read_intent and not write_intent:
+            raise ValueError(
+                "Setup needs either explicit --query-path/--edit-path values, a plain-English --intent, "
+                "or separate --read-intent/--write-intent values."
+            )
         planning_result = plan_role_scope(
             paths.root,
             config=config,
             role_name=role_name,
             description=description,
-            intent=intent,
+            intent=intent or "",
+            read_intent=read_intent,
+            write_intent=write_intent,
             planner_executor=planner_executor,
         )
         query_paths = planning_result.query_paths
@@ -72,14 +81,26 @@ def run_setup(
 
     annotation_result = None
     if auto_annotate_enabled:
-        annotation_result = auto_annotate_repo(
-            paths.root,
-            roles=(role.name,),
-            query_globs=annotate_query_globs,
-            edit_globs=annotate_edit_globs,
-            force=force_annotations,
-            dry_run=False,
-        )
+        if semantic_annotations:
+            annotation_result = semantic_annotate_repo(
+                paths.root,
+                config=config,
+                roles=(role.name,),
+                query_globs=annotate_query_globs,
+                edit_globs=annotate_edit_globs,
+                executor=planner_executor,
+                force=force_annotations,
+                dry_run=False,
+            )
+        else:
+            annotation_result = auto_annotate_repo(
+                paths.root,
+                roles=(role.name,),
+                query_globs=annotate_query_globs,
+                edit_globs=annotate_edit_globs,
+                force=force_annotations,
+                dry_run=False,
+            )
     index_result, _ = rebuild_index(paths.root)
 
     lines: list[str] = []
@@ -113,8 +134,8 @@ def run_setup(
         lines.extend(f"- {item}" for item in annotation_result.warnings)
 
     if install_github_enabled:
-        _, workflow_path = install_github(paths.root, force=True)
-        lines.append(f"Step {step_number}: installed GitHub workflow at {workflow_path}")
+        _, workflow_path, triage_workflow_path = install_github(paths.root, force=True)
+        lines.append(f"Step {step_number}: installed GitHub workflows at {workflow_path} and {triage_workflow_path}")
         step_number += 1
     if install_slack_enabled:
         config_path = install_slack(paths.root, webhook_env=slack_webhook_env)

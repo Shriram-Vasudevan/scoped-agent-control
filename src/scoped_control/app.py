@@ -230,6 +230,8 @@ class ScopedControlApp(App[None]):
                 role_name=submission.role_name,
                 description=submission.description,
                 intent=submission.intent,
+                read_intent=submission.read_intent or None,
+                write_intent=submission.write_intent or None,
                 query_paths=(),
                 edit_paths=(),
                 annotate_query_globs=(),
@@ -240,6 +242,7 @@ class ScopedControlApp(App[None]):
                 install_slack_enabled=submission.install_slack_enabled,
                 slack_webhook_env=submission.slack_webhook_env,
                 force_annotations=submission.force_annotations,
+                semantic_annotations=submission.semantic_annotations,
             )
         except Exception as exc:
             self.console_state.record_result("setup", f"Setup failed: {exc}", ())

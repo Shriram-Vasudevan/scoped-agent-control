@@ -34,6 +34,9 @@ class SetupSubmission:
     install_slack_enabled: bool
     slack_webhook_env: str
     force_annotations: bool = False
+    read_intent: str = ""
+    write_intent: str = ""
+    semantic_annotations: bool = False
 
 
 class SetupScreen(ModalScreen[SetupSubmission | None]):
@@ -92,9 +95,21 @@ class SetupScreen(ModalScreen[SetupSubmission | None]):
                 id="setup-description",
                 classes="setup-field",
             )
-            yield Label("What should this role generally be allowed to do?")
+            yield Label("What should this role be allowed to READ?")
             yield Input(
-                value=f"This role can query and edit the relevant parts of the {self.repo_name} project.",
+                value=f"Files in {self.repo_name} this role needs to reason about.",
+                id="setup-read-intent",
+                classes="setup-field",
+            )
+            yield Label("What should this role be allowed to WRITE / EDIT? (say 'none' for read-only)")
+            yield Input(
+                value="The narrowest set of files this role may change.",
+                id="setup-write-intent",
+                classes="setup-field",
+            )
+            yield Label("Optional single-sentence intent (legacy, overrides the two above if filled)")
+            yield Input(
+                value="",
                 id="setup-intent",
                 classes="setup-field",
             )
@@ -106,6 +121,7 @@ class SetupScreen(ModalScreen[SetupSubmission | None]):
                 classes="setup-field",
             )
             yield Checkbox("Auto-annotate matched files", value=True, id="setup-auto-annotate", classes="setup-field")
+            yield Checkbox("Semantic annotations (per-function, LLM-placed)", value=False, id="setup-semantic-annotate", classes="setup-field")
             yield Checkbox("Install GitHub workflow", value=False, id="setup-install-github", classes="setup-field")
             yield Checkbox("Enable Slack notifications", value=False, id="setup-install-slack", classes="setup-field")
             yield Label("Slack webhook env var")
@@ -138,8 +154,11 @@ class SetupScreen(ModalScreen[SetupSubmission | None]):
         role_name = self.query_one("#setup-role", Input).value.strip()
         description = self.query_one("#setup-description", Input).value.strip()
         intent = self.query_one("#setup-intent", Input).value.strip()
+        read_intent = self.query_one("#setup-read-intent", Input).value.strip()
+        write_intent = self.query_one("#setup-write-intent", Input).value.strip()
         planner_executor = self.query_one("#setup-planner", Input).value.strip().lower() or "auto"
         auto_annotate_enabled = self.query_one("#setup-auto-annotate", Checkbox).value
+        semantic_annotations = self.query_one("#setup-semantic-annotate", Checkbox).value
         install_github_enabled = self.query_one("#setup-install-github", Checkbox).value
         install_slack_enabled = self.query_one("#setup-install-slack", Checkbox).value
         slack_webhook_env = self.query_one("#setup-slack-env", Input).value.strip() or "SLACK_WEBHOOK_URL"
@@ -150,8 +169,8 @@ class SetupScreen(ModalScreen[SetupSubmission | None]):
         if not description:
             self._set_error("Description is required.")
             return
-        if not intent:
-            self._set_error("A plain-English role intent is required.")
+        if not intent and not (read_intent or write_intent):
+            self._set_error("Provide at least one of: read intent, write intent, or the single-sentence intent.")
             return
         if planner_executor not in {"auto", "codex", "claude_code", "heuristic"}:
             self._set_error("Planner must be one of: auto, codex, claude_code, heuristic.")
@@ -170,6 +189,9 @@ class SetupScreen(ModalScreen[SetupSubmission | None]):
                 install_github_enabled=install_github_enabled,
                 install_slack_enabled=install_slack_enabled,
                 slack_webhook_env=slack_webhook_env,
+                read_intent=read_intent,
+                write_intent=write_intent,
+                semantic_annotations=semantic_annotations,
             )
         )
 
