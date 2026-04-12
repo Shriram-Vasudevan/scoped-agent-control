@@ -73,13 +73,30 @@ def plan_role_scope(
     intent: str,
     planner_executor: str = "auto",
     max_files: int = 400,
+    read_intent: str | None = None,
+    write_intent: str | None = None,
 ) -> PlannedRoleScope:
-    """Infer query/edit scope from a role description and repository inventory."""
+    """Infer query/edit scope from a role description and repository inventory.
+
+    If `read_intent` and/or `write_intent` are provided, the planner uses them
+    to infer query_paths and edit_paths independently. Otherwise it falls back
+    to the single `intent` field.
+    """
 
     inventory = collect_repo_inventory(root, max_files=max_files)
     selected_planner = _resolve_planner_executor(config, planner_executor)
+    combined_intent = _combine_intents(intent=intent, read_intent=read_intent, write_intent=write_intent)
+    split_intents = bool(read_intent or write_intent)
+
     if selected_planner == "heuristic":
-        return _plan_role_scope_heuristic(role_name=role_name, description=description, intent=intent, inventory=inventory)
+        return _plan_role_scope_heuristic(
+            role_name=role_name,
+            description=description,
+            intent=combined_intent,
+            inventory=inventory,
+            read_intent=read_intent,
+            write_intent=write_intent,
+        )
 
     try:
         return _plan_role_scope_with_llm(
@@ -87,12 +104,21 @@ def plan_role_scope(
             config=config,
             role_name=role_name,
             description=description,
-            intent=intent,
+            intent=combined_intent,
             inventory=inventory,
             planner=selected_planner,
+            read_intent=read_intent if split_intents else None,
+            write_intent=write_intent if split_intents else None,
         )
     except Exception as exc:
-        heuristic = _plan_role_scope_heuristic(role_name=role_name, description=description, intent=intent, inventory=inventory)
+        heuristic = _plan_role_scope_heuristic(
+            role_name=role_name,
+            description=description,
+            intent=combined_intent,
+            inventory=inventory,
+            read_intent=read_intent,
+            write_intent=write_intent,
+        )
         return PlannedRoleScope(
             query_paths=heuristic.query_paths,
             edit_paths=heuristic.edit_paths,
@@ -101,6 +127,17 @@ def plan_role_scope(
             reasoning=(f"{selected_planner} planner failed: {exc}", *heuristic.reasoning),
             planner=f"{selected_planner}->heuristic",
         )
+
+
+def _combine_intents(*, intent: str, read_intent: str | None, write_intent: str | None) -> str:
+    parts: list[str] = []
+    if read_intent:
+        parts.append(f"READ: {read_intent}")
+    if write_intent:
+        parts.append(f"WRITE: {write_intent}")
+    if intent:
+        parts.append(intent)
+    return "\n".join(parts).strip() or intent
 
 
 def collect_repo_inventory(root: Path, *, max_files: int = 400) -> tuple[str, ...]:
@@ -140,8 +177,17 @@ def _plan_role_scope_with_llm(
     intent: str,
     inventory: tuple[str, ...],
     planner: str,
+    read_intent: str | None = None,
+    write_intent: str | None = None,
 ) -> PlannedRoleScope:
-    prompt = _render_planner_prompt(role_name=role_name, description=description, intent=intent, inventory=inventory)
+    prompt = _render_planner_prompt(
+        role_name=role_name,
+        description=description,
+        intent=intent,
+        inventory=inventory,
+        read_intent=read_intent,
+        write_intent=write_intent,
+    )
     if planner == "codex":
         output = _run_codex_planner(config, root, prompt)
     elif planner == "claude_code":
@@ -152,7 +198,24 @@ def _plan_role_scope_with_llm(
     return _parse_planned_role_scope(payload, planner=planner)
 
 
-def _render_planner_prompt(*, role_name: str, description: str, intent: str, inventory: tuple[str, ...]) -> str:
+def _render_planner_prompt(
+    *,
+    role_name: str,
+    description: str,
+    intent: str,
+    inventory: tuple[str, ...],
+    read_intent: str | None = None,
+    write_intent: str | None = None,
+) -> str:
+    intent_lines: list[str] = []
+    if read_intent:
+        intent_lines.append(f"Read intent (maps to query_paths): {read_intent}")
+    if write_intent:
+        intent_lines.append(f"Write intent (maps to edit_paths): {write_intent}")
+    if not intent_lines and intent:
+        intent_lines.append(f"Role intent: {intent}")
+    intents_block = "\n".join(intent_lines) if intent_lines else ""
+
     return (
         "You are planning repository access for scoped-agent-control.\n"
         "Infer the narrowest practical role scope from the role description and repository inventory.\n"
@@ -169,10 +232,11 @@ def _render_planner_prompt(*, role_name: str, description: str, intent: str, inv
         "- Prefer repository-relative globs such as src/** or exact file paths.\n"
         "- edit_paths should usually be a subset of query_paths.\n"
         "- If the role truly needs broad project access, use **/*.\n"
+        "- If the write intent says `none` or is empty, edit_paths must be [].\n"
         "- Do not include markdown fences or commentary outside the JSON.\n\n"
         f"Role name: {role_name}\n"
         f"Role description: {description}\n"
-        f"Role intent: {intent}\n\n"
+        f"{intents_block}\n\n"
         "Repository inventory:\n"
         + "\n".join(f"- {path}" for path in inventory)
         + "\n"
@@ -265,12 +329,21 @@ def _parse_planned_role_scope(payload: dict[str, object], *, planner: str) -> Pl
     )
 
 
-def _plan_role_scope_heuristic(*, role_name: str, description: str, intent: str, inventory: tuple[str, ...]) -> PlannedRoleScope:
-    combined = " ".join((role_name, description, intent)).lower()
+def _plan_role_scope_heuristic(
+    *,
+    role_name: str,
+    description: str,
+    intent: str,
+    inventory: tuple[str, ...],
+    read_intent: str | None = None,
+    write_intent: str | None = None,
+) -> PlannedRoleScope:
+    combined = " ".join((role_name, description, intent, read_intent or "", write_intent or "")).lower()
     tokens = set(_tokenize(combined))
+    write_is_none = write_intent is not None and write_intent.strip().lower() in {"none", "no", "n/a", "nothing", "read-only", "readonly"}
 
     if tokens & GLOBAL_SCOPE_HINTS:
-        read_only = _looks_read_only(combined)
+        read_only = _looks_read_only(combined) or write_is_none
         return PlannedRoleScope(
             query_paths=("**/*",),
             edit_paths=() if read_only else ("**/*",),
@@ -289,7 +362,7 @@ def _plan_role_scope_heuristic(*, role_name: str, description: str, intent: str,
     )
     matched_files = tuple(path for score, path in scored if score > 0)
     if not matched_files:
-        read_only = _looks_read_only(combined)
+        read_only = _looks_read_only(combined) or write_is_none
         return PlannedRoleScope(
             query_paths=("**/*",),
             edit_paths=() if read_only else ("**/*",),
@@ -301,7 +374,7 @@ def _plan_role_scope_heuristic(*, role_name: str, description: str, intent: str,
 
     top_matches = matched_files[:12]
     query_paths = _collapse_paths_to_globs(top_matches)
-    edit_paths = () if _looks_read_only(combined) else query_paths
+    edit_paths = () if (_looks_read_only(combined) or write_is_none) else query_paths
     return PlannedRoleScope(
         query_paths=query_paths,
         edit_paths=edit_paths,

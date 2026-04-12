@@ -9,7 +9,7 @@ from pathlib import Path
 from scoped_control.app import ScopedControlApp
 from scoped_control.config.loader import bootstrap_repo
 from scoped_control.errors import ScopedControlError
-from scoped_control.integrations.github import load_remote_edit_request
+from scoped_control.integrations.github import load_remote_edit_request, load_remote_triage_request
 from scoped_control.setup_flow import run_setup
 from scoped_control.tui.commands import execute_args
 
@@ -30,6 +30,9 @@ def build_parser() -> argparse.ArgumentParser:
     setup_parser.add_argument("--role", help="Role name to create or update")
     setup_parser.add_argument("--description", help="Role description")
     setup_parser.add_argument("--intent", help="Plain-English description of what this role should generally be able to do")
+    setup_parser.add_argument("--read-intent", help="What this role should be allowed to READ, in plain English")
+    setup_parser.add_argument("--write-intent", help="What this role should be allowed to WRITE / EDIT, in plain English (use 'none' for read-only)")
+    setup_parser.add_argument("--semantic-annotations", action="store_true", help="Ask the executor to place fine-grained function/class surfaces instead of file-scope headers")
     setup_parser.add_argument("--query-path", action="append", help="Repo path glob this role may read")
     setup_parser.add_argument("--edit-path", action="append", help="Repo path glob this role may edit")
     setup_parser.add_argument("--annotate-query-glob", action="append", help="File glob to auto-annotate for query access")
@@ -79,6 +82,12 @@ def build_parser() -> argparse.ArgumentParser:
     install_slack_parser.add_argument("--webhook-env", default="SLACK_WEBHOOK_URL")
     install_email_parser = install_subparsers.add_parser("email", help="Show current email integration status")
     install_email_parser.add_argument("--path", type=Path, default=Path.cwd(), help="Repo root or nested path to inspect")
+    install_claude_parser = install_subparsers.add_parser(
+        "claude-code",
+        help="Install Claude Code slash commands under .claude/commands/",
+    )
+    install_claude_parser.add_argument("--path", type=Path, default=Path.cwd(), help="Repo root or nested path to inspect")
+    install_claude_parser.add_argument("--force", action="store_true")
 
     query_parser = subparsers.add_parser("query", help="Run a read-only scoped query")
     query_parser.add_argument("role_name")
@@ -98,6 +107,36 @@ def build_parser() -> argparse.ArgumentParser:
     remote_edit_parser.add_argument("--event-file", type=Path, required=True, help="Path to a GitHub event payload JSON file")
     remote_edit_parser.add_argument("--executor", choices=("codex", "claude_code", "fake"))
     remote_edit_parser.add_argument("--path", type=Path, default=Path.cwd(), help="Repo root or nested path to inspect")
+
+    remote_triage_parser = subparsers.add_parser(
+        "remote-triage",
+        help="Triage and run a remote request from a GitHub event payload (auto-picks query vs edit and role)",
+    )
+    remote_triage_parser.add_argument("--event-file", type=Path, required=True, help="Path to a GitHub event payload JSON file")
+    remote_triage_parser.add_argument("--executor", choices=("codex", "claude_code", "fake"))
+    remote_triage_parser.add_argument("--triager", choices=("auto", "heuristic", "codex", "claude_code"), default="auto")
+    remote_triage_parser.add_argument("--path", type=Path, default=Path.cwd(), help="Repo root or nested path to inspect")
+
+    triage_parser = subparsers.add_parser(
+        "triage",
+        help="Classify a request as query vs edit, pick a role, and check scope without running it",
+    )
+    triage_parser.add_argument("request_tokens", nargs="+")
+    triage_parser.add_argument("--role", help="Optional role preference; triage still checks scope")
+    triage_parser.add_argument("--triager", choices=("auto", "heuristic", "codex", "claude_code"), default="auto")
+    triage_parser.add_argument("--execute", action="store_true", help="Also run the query or edit after triage")
+    triage_parser.add_argument("--executor", choices=("codex", "claude_code", "fake"))
+    triage_parser.add_argument("--path", type=Path, default=Path.cwd(), help="Repo root or nested path to inspect")
+
+    slack_parser = subparsers.add_parser(
+        "serve-slack",
+        help="Run an HTTP server that accepts Slack slash commands and triages them",
+    )
+    slack_parser.add_argument("--host", default="127.0.0.1")
+    slack_parser.add_argument("--port", type=int, default=8787)
+    slack_parser.add_argument("--signing-secret", help="Slack signing secret (defaults to SLACK_SIGNING_SECRET env var)")
+    slack_parser.add_argument("--executor", choices=("codex", "claude_code", "fake"))
+    slack_parser.add_argument("--path", type=Path, default=Path.cwd(), help="Repo root or nested path to inspect")
 
     role_parser = subparsers.add_parser("role", help="Manage roles in config.yaml")
     role_subparsers = role_parser.add_subparsers(dest="role_command", required=True)
@@ -148,6 +187,12 @@ def main(argv: list[str] | None = None) -> int:
             return _run_tui(args.path)
         if args.command == "remote-edit":
             return _run_remote_edit(args)
+        if args.command == "remote-triage":
+            return _run_remote_triage(args)
+        if args.command == "triage":
+            return _run_triage(args)
+        if args.command == "serve-slack":
+            return _run_serve_slack(args)
         if args.command in {"check", "scan", "index", "cleanup", "annotate", "install", "query", "edit", "role", "surface", "validator"}:
             return _run_shared_command(args)
         return _run_tui(Path.cwd())
@@ -172,24 +217,41 @@ def _run_init(path: Path, force: bool) -> int:
 
 def _run_setup(args: argparse.Namespace) -> int:
     guided = _stdin_isatty() and (
-        args.role is None or args.description is None or (args.intent is None and args.query_path is None and args.edit_path is None)
+        args.role is None
+        or args.description is None
+        or (
+            args.intent is None
+            and args.read_intent is None
+            and args.write_intent is None
+            and args.query_path is None
+            and args.edit_path is None
+        )
     )
 
     role_name = args.role or _prompt_text("Role name", "maintainer", enabled=guided)
     description_default = f"Scoped operator for {args.path.resolve().name}."
     description = args.description or _prompt_text("Role description", description_default, enabled=guided)
     intent = args.intent or ""
+    read_intent = args.read_intent
+    write_intent = args.write_intent
 
     query_paths = tuple(args.query_path or ())
     edit_paths = tuple(args.edit_path or ())
     using_explicit_paths = bool(query_paths or edit_paths)
     if not using_explicit_paths:
-        intent_default = f"{role_name} should be able to work on the relevant parts of this project."
-        intent = intent or _prompt_text(
-            "What should this role generally be allowed to do?",
-            intent_default,
-            enabled=guided,
-        )
+        if read_intent is None and write_intent is None and not intent:
+            read_default = f"{role_name} should be able to read the parts of the project it needs to reason about."
+            write_default = "Pick the narrowest set of files this role may change, or say 'none' for read-only."
+            read_intent = _prompt_text(
+                "What should this role be allowed to READ?",
+                read_default,
+                enabled=guided,
+            )
+            write_intent = _prompt_text(
+                "What should this role be allowed to WRITE / EDIT? (say 'none' for read-only)",
+                write_default,
+                enabled=guided,
+            )
 
     auto_annotate_enabled = not args.skip_annotate
     if guided and not args.skip_annotate:
@@ -232,6 +294,8 @@ def _run_setup(args: argparse.Namespace) -> int:
         role_name=role_name,
         description=description,
         intent=intent or None,
+        read_intent=read_intent,
+        write_intent=write_intent,
         query_paths=query_paths,
         edit_paths=edit_paths,
         annotate_query_globs=annotate_query_globs if auto_annotate_enabled else (),
@@ -242,6 +306,7 @@ def _run_setup(args: argparse.Namespace) -> int:
         install_slack_enabled=install_slack_enabled,
         slack_webhook_env=slack_webhook_env,
         force_annotations=force_annotations,
+        semantic_annotations=args.semantic_annotations,
     )
     print("Setup complete.")
     for line in lines:
@@ -274,6 +339,100 @@ def _run_remote_edit(args: argparse.Namespace) -> int:
     for line in result.lines:
         print(line, file=stream)
     return 0 if result.ok else 1
+
+
+def _run_remote_triage(args: argparse.Namespace) -> int:
+    from scoped_control.config.loader import load_config
+    from scoped_control.index.store import load_index
+    from scoped_control.triage import triage_request
+
+    payload = load_remote_triage_request(args.event_file)
+    paths, config = load_config(args.path)
+    index = load_index(paths.index_path)
+    decision = triage_request(
+        paths.root,
+        config,
+        index,
+        payload.request,
+        requested_role=payload.role_name,
+        triager=args.triager,
+    )
+    _print_triage_decision(decision)
+    if not decision.ok:
+        return 1
+    namespace = argparse.Namespace(
+        command=decision.mode,
+        role_name=decision.role_name,
+        request_tokens=[decision.request],
+        executor=args.executor or payload.executor,
+        top_k=3 if decision.mode == "query" else 1,
+    )
+    result = execute_args(args.path, namespace, raw_command=f"remote-triage {decision.mode} {decision.role_name}")
+    stream = sys.stdout if result.ok else sys.stderr
+    print(result.message, file=stream)
+    for line in result.lines:
+        print(line, file=stream)
+    return 0 if result.ok else 1
+
+
+def _run_triage(args: argparse.Namespace) -> int:
+    from scoped_control.config.loader import load_config
+    from scoped_control.index.store import load_index
+    from scoped_control.triage import triage_request
+
+    request = " ".join(args.request_tokens).strip()
+    paths, config = load_config(args.path)
+    index = load_index(paths.index_path)
+    decision = triage_request(
+        paths.root,
+        config,
+        index,
+        request,
+        requested_role=args.role,
+        triager=args.triager,
+    )
+    _print_triage_decision(decision)
+    if not decision.ok:
+        return 1
+    if not args.execute:
+        return 0
+    namespace = argparse.Namespace(
+        command=decision.mode,
+        role_name=decision.role_name,
+        request_tokens=[decision.request],
+        executor=args.executor,
+        top_k=3 if decision.mode == "query" else 1,
+    )
+    result = execute_args(args.path, namespace, raw_command=f"triage {decision.mode} {decision.role_name}")
+    stream = sys.stdout if result.ok else sys.stderr
+    print(result.message, file=stream)
+    for line in result.lines:
+        print(line, file=stream)
+    return 0 if result.ok else 1
+
+
+def _run_serve_slack(args: argparse.Namespace) -> int:
+    from scoped_control.integrations.slack_server import serve
+
+    serve(
+        args.path,
+        host=args.host,
+        port=args.port,
+        signing_secret=args.signing_secret,
+        executor=args.executor,
+    )
+    return 0
+
+
+def _print_triage_decision(decision) -> None:
+    print(f"Triage decision: mode={decision.mode} role={decision.role_name} triager={decision.triager}")
+    print(f"Reason: {decision.reason}")
+    if decision.target_files:
+        print(f"Targets: {', '.join(decision.target_files)}")
+    if decision.candidate_roles:
+        print(f"Candidate roles considered: {', '.join(decision.candidate_roles)}")
+    for item in decision.reasoning:
+        print(f"- {item}")
 
 
 def _run_tui(path: Path) -> int:

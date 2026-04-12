@@ -51,5 +51,6 @@ def test_wave6_smoke_init_scan_query_blocked_edit_and_install(tmp_path, capsys) 
 
     assert main(["install", "github", "--path", str(repo_root)]) == 0
     install_output = capsys.readouterr().out
-    assert "Installed GitHub remote-edit scaffolding." in install_output
+    assert "Installed GitHub remote-edit and remote-triage scaffolding." in install_output
     assert (repo_root / ".github" / "workflows" / "scoped-control.yml").exists()
+    assert (repo_root / ".github" / "workflows" / "scoped-control-triage.yml").exists()

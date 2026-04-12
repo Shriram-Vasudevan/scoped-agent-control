@@ -67,7 +67,8 @@ def test_setup_cli_runs_guided_prompts(tmp_path, capsys, monkeypatch) -> None:
         (
             "recruiter",
             "",
-            "Recruiter can update prompt copy and related markdown in the prompts folder.",
+            "Recruiter reads prompt copy and related markdown in the prompts folder.",
+            "Recruiter can update prompt copy in the prompts folder.",
             "yes",
             "no",
             "no",
