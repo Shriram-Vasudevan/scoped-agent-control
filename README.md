@@ -48,30 +48,35 @@ The whole point of the system is that you run one command, answer a few plain-En
 scoped-control
 ```
 
-If the repo has not been initialized, the setup screen opens automatically. You can also reopen it at any time with `/setup` or by pressing `s`.
+If the repo has not been initialized, a conversational setup wizard starts automatically in the same log/input view you're already in. Restart it any time with `/setup` (or `/init`), abort mid-flow with `/cancel`.
 
-### 2. Run guided setup — one role, two intents
+### 2. Run guided setup — one role, four questions
 
-The setup screen (and `scoped-control setup`) now asks for **read intent** and **write intent** separately, so reads and writes never get conflated:
+The wizard asks four questions, one at a time, in the same input. Defaults show as placeholder text; press Enter to accept any of them:
 
 ```
-Role name:         recruiter
-Description:       Recruiting copy editor
-Read intent:       Recruiter should be able to read the careers page, role postings,
-                   and the public hiring docs.
-Write intent:      Only the careers markdown files. Nothing else is editable.
-Planner:           auto       (uses Codex or Claude Code if installed, else heuristic)
-Auto-annotate:     ✓
-Semantic surfaces: ☐ (on = per-function surfaces placed by the LLM; off = one
-                     file-scope header per matched file)
+Step 1 of 4  Role name
+  Short name. Examples: maintainer, docs-writer, recruiter, test-author.
+  Press Enter to use: maintainer
+
+Step 2 of 4  Describe this role in one line
+  What does this person or agent actually do?
+  Press Enter to use: Scoped operator for <repo-name>
+
+Step 3 of 4  What should this role be allowed to READ?
+  Plain English. e.g. 'the careers page and hiring docs'. 'everything' is valid.
+  Press Enter to use: everything
+
+Step 4 of 4  What should this role be allowed to WRITE / EDIT?
+  Plain English. Say 'none' for read-only, or name the narrowest set of files.
+  Press Enter to use: none
 ```
 
 scoped-control then:
 
 1. writes `.scoped-control/config.yaml` with the role and its inferred `query_paths` / `edit_paths`,
-2. inserts annotations into matched files (file-scope by default, or function/class level if you opted into semantic annotations),
-3. rebuilds `.scoped-control/index.json`,
-4. optionally installs the GitHub workflows and Slack notification wiring.
+2. **does not touch any files by default** — this is config-only mode; the resolver synthesizes whole-file surfaces on demand for anything the role's globs cover,
+3. writes an empty `.scoped-control/index.json` (nothing to index until you opt into explicit annotations).
 
 You can also run setup fully non-interactively:
 
@@ -81,9 +86,10 @@ scoped-control setup --path . \
   --description "Recruiting copy editor" \
   --read-intent  "Recruiter reads careers copy, role postings, and hiring docs." \
   --write-intent "Only careers/**/*.md is editable." \
-  --semantic-annotations \
   --planner-executor auto
 ```
+
+Add `--annotate-files` if you want scoped-control to stamp file-scope annotation headers into every matched file at setup time. Skip the flag unless you specifically need per-file overrides or span rules — see [Annotations are opt-in overrides](#annotations-are-opt-in-overrides) below.
 
 ### 3. Install the entrypoints you care about
 
@@ -189,8 +195,10 @@ Query paths: careers/**
 Edit paths: careers/**
 Planner reasoning:
 - Heuristic matched repo paths: careers/intro.md, careers/openings.md
-Step 4: auto-annotated 2 file(s)
-Step 5: indexed 2 surface(s)
+Step 4: config-only mode (no files modified); role globs alone gate access.
+        Run `scoped-control annotate --role recruiter` later to add per-file
+        overrides or span rules.
+Step 5: indexed 0 explicit surface(s)
 
 # 2. Install all three entrypoints
 $ scoped-control install claude-code --path .
@@ -263,11 +271,25 @@ Entrypoint integrations
 
 TUI
 
-- `scoped-control tui --path .` — open the Textual console. Press `s` or run `/setup`. Same slash commands work here: `/triage`, `/query`, `/edit`, `/surface list`, `/install claude-code`, …
+- `scoped-control` (or `scoped-control tui --path .`) — open the conversational Textual console. On an uninitialized repo the setup wizard starts automatically. Slash commands that work inside the TUI: `/setup`, `/init`, `/role list`, `/surface list`, `/scan`, `/query <role> <request>`, `/edit <role> <request>`, `/annotate`, `/cleanup --force`, `/install <target>`, `/help`, `/clear`, `/quit`. (`triage`, `remote-triage`, and `serve-slack` are CLI-only.)
 
-## Annotation format
+## Annotations are opt-in overrides
 
-File-scope (default, placed by `auto_annotate_repo`):
+**Policy model: config is the floor, annotations tighten further if present.** For most roles, the config alone (role globs in `.scoped-control/config.yaml`) is the whole policy — the resolver synthesizes whole-file surfaces on demand for any file a role's globs cover, so you do not need a per-file header to make a file accessible.
+
+You insert annotations only when you want to *override* the default for a specific file or chunk. Three cases where annotations earn their keep:
+
+1. **Carve-outs.** A broadly-scoped role can read a file, but one specific file should be restricted to a narrower role.
+2. **Span rules.** `invariants: span_scope` on a function so edits can't bleed outside it.
+3. **Dependency hints.** `depends_on: ...` so queries pull in related context automatically.
+
+Placement options:
+
+- `scoped-control annotate --role <name>` — stamp file-scope headers into matched files (or pass `--query-glob` / `--edit-glob` for narrower targets).
+- `scoped-control setup --annotate-files ...` — do both steps in one shot at setup time.
+- `scoped-control setup --semantic-annotations ...` — opt into per-function surfaces placed by an LLM (Codex or Claude Code, if installed).
+
+Annotation syntax. File-scope (whole file is one surface):
 
 ```python
 # surface: careers.openings
@@ -276,7 +298,7 @@ File-scope (default, placed by `auto_annotate_repo`):
 # invariants: file_scope
 ```
 
-Semantic / per-declaration (placed by `semantic_annotate_repo` when you pass `--semantic-annotations`; the LLM picks function and class boundaries and emits one annotation block per surface):
+Span-scope (a specific function or class is a surface):
 
 ```python
 # surface: core.compute_total
@@ -290,21 +312,22 @@ def compute_total(items):
 Both `#` and `//` comment styles are supported. Supported fields:
 
 - `surface` — unique id stored in the index.
-- `roles` — comma-separated role names that may access this surface (empty = all roles).
+- `roles` — comma-separated role names that may access this surface (empty = anyone whose role globs cover this file).
 - `modes` — `query` and/or `edit`.
-- `invariants` — `file_scope` or `span_scope` (others are treated as tags).
+- `invariants` — `file_scope` or `span_scope` (others are treated as tags). An additional `implicit` tag appears on synthesized in-memory surfaces; you never write it yourself.
 - `depends_on` — comma-separated surface ids that should be included as read-only context.
 
 ## Deterministic enforcement
 
 Every edit, regardless of entrypoint, is run in a sandbox workspace and then checked against:
 
-- **Span checks** — modifications must stay within the annotated surface's line range.
+- **Scope** — the edit target surface's file must be covered by the role's `edit_paths`. Files outside that glob are blocked before the edit even runs. This is the first line of defense whether or not the file has an explicit annotation.
+- **Span checks** — modifications must stay within the target surface's line range. For explicit `span_scope` surfaces that's the function/class; for explicit file-scope surfaces or for synthesized implicit surfaces that's the whole file.
 - **Diff checks** — enforces `limits.max_changed_files` and `limits.max_diff_lines`.
 - **Dependency invariants** — `depends_on` surfaces are read-only during edits.
 - **Validators** — any `validators:` entry for mode `edit` runs post-change; a non-zero exit blocks the edit.
 
-If any check fails, the edit is rolled back and the entrypoint (TUI line, Slack reply, GitHub log, Claude Code response) shows the blocked reasons verbatim.
+If any check fails, the edit is rolled back and the entrypoint (TUI log line, Slack reply, GitHub log) shows the blocked reasons verbatim.
 
 ## Testing
 

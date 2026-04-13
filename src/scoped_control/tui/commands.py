@@ -253,7 +253,7 @@ def _execute_query_command(repo_path: Path, args: argparse.Namespace, command_na
     index = load_index(paths.index_path)
     role = config.get_role(args.role_name)
     request = " ".join(args.request_tokens).strip()
-    resolution = resolve_query_surfaces(role, index, request, top_k=args.top_k)
+    resolution = resolve_query_surfaces(role, index, request, top_k=args.top_k, repo_root=paths.root)
     if not resolution.matches:
         return CommandResult(command=command_name, ok=False, message=f"No query surfaces matched for role `{role.name}`.")
 
@@ -281,7 +281,7 @@ def _execute_edit_command(repo_path: Path, args: argparse.Namespace, command_nam
     index = load_index(paths.index_path)
     role = config.get_role(args.role_name)
     request = " ".join(args.request_tokens).strip()
-    resolution = resolve_edit_surfaces(role, index, request, top_k=args.top_k)
+    resolution = resolve_edit_surfaces(role, index, request, top_k=args.top_k, repo_root=paths.root)
     if not resolution.matches:
         return CommandResult(command=command_name, ok=False, message=f"No edit surfaces matched for role `{role.name}`.")
 

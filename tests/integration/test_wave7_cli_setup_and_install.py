@@ -29,6 +29,7 @@ def test_setup_bootstraps_role_config_annotations_and_index(tmp_path, capsys) ->
             "guide.md",
             "--edit-path",
             "app.py",
+            "--annotate-files",
         ]
     )
 
@@ -37,7 +38,7 @@ def test_setup_bootstraps_role_config_annotations_and_index(tmp_path, capsys) ->
     assert exit_code == 0
     assert "Setup complete." in output
     assert "Step 3: auto-annotated 2 file(s)" in output
-    assert "Step 4: indexed 2 surface(s)" in output
+    assert "Step 4: indexed 2 explicit surface(s)" in output
 
     _, config = load_config(repo_root)
     assert config.get_role("writer").description == "Writer role"

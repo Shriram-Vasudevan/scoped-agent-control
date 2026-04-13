@@ -27,6 +27,7 @@ def test_setup_cli_bootstraps_role_and_auto_annotations(tmp_path, capsys) -> Non
             "PM can update product docs in the docs folder.",
             "--planner-executor",
             "heuristic",
+            "--annotate-files",
         ]
     )
 
@@ -69,10 +70,10 @@ def test_setup_cli_runs_guided_prompts(tmp_path, capsys, monkeypatch) -> None:
             "",
             "Recruiter reads prompt copy and related markdown in the prompts folder.",
             "Recruiter can update prompt copy in the prompts folder.",
-            "yes",
-            "no",
-            "no",
-            "no",
+            "yes",  # annotate prompt -> yes (so the index gets explicit surfaces)
+            "no",   # replace existing annotations
+            "no",   # install github
+            "no",   # install slack
         )
     )
 
