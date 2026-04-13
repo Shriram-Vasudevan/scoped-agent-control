@@ -30,12 +30,12 @@ class ClaudeCodeExecutor(ExecutorAdapter):
             "text",
             "--permission-mode",
             "default",
-            "--tools",
-            "",
-            prompt,
         ]
-        completed = subprocess.run(
+        # Pass the prompt via stdin — avoids CLI-flag/positional interactions
+        # (older `--tools ""` patterns that swallowed the positional argument).
+        completed = subprocess.run(  # noqa: S603
             command,
+            input=prompt,
             text=True,
             capture_output=True,
             cwd=workspace,
@@ -62,10 +62,10 @@ class ClaudeCodeExecutor(ExecutorAdapter):
             "acceptEdits",
             "--allowedTools",
             "Edit,Read,Bash",
-            prompt,
         ]
-        completed = subprocess.run(
+        completed = subprocess.run(  # noqa: S603
             command,
+            input=prompt,
             text=True,
             capture_output=True,
             cwd=workspace,

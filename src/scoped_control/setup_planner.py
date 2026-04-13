@@ -283,12 +283,10 @@ def _run_claude_planner(config: AppConfig, root: Path, prompt: str) -> str:
         "text",
         "--permission-mode",
         "default",
-        "--tools",
-        "",
-        prompt,
     ]
     completed = subprocess.run(
         command,
+        input=prompt,
         text=True,
         capture_output=True,
         cwd=root,
