@@ -390,6 +390,19 @@ def _execute_install_command(repo_path: Path, args: argparse.Namespace, command_
             lines=tuple(f"Command: {path}" for path in installed),
         )
 
+    if args.install_command == "fastapi":
+        from scoped_control.integrations.fastapi_scaffold import install_fastapi
+
+        out_dir = getattr(args, "out", None) or (repo_path / "app" / "routers")
+        module_name = getattr(args, "module", "scoped_slack_bridge")
+        result = install_fastapi(out_dir, module_name=module_name)
+        return CommandResult(
+            command=command_name,
+            ok=True,
+            message=f"Scaffolded FastAPI Slack bridge at {result.bridge_path}",
+            lines=tuple(result.instructions.splitlines()),
+        )
+
     if args.install_command == "slack":
         return CommandResult(
             command=command_name,
@@ -485,15 +498,18 @@ def _build_command_parser() -> _CommandParser:
     install_commands.add_parser("email", add_help=False)
     install_claude_parser = install_commands.add_parser("claude-code", add_help=False)
     install_claude_parser.add_argument("--force", action="store_true")
+    install_fastapi_parser = install_commands.add_parser("fastapi", add_help=False)
+    install_fastapi_parser.add_argument("--out", type=Path)
+    install_fastapi_parser.add_argument("--module", default="scoped_slack_bridge")
     query_parser = subparsers.add_parser("query", add_help=False)
     query_parser.add_argument("role_name")
     query_parser.add_argument("request_tokens", nargs="+")
-    query_parser.add_argument("--executor", choices=("codex", "claude_code", "fake"))
+    query_parser.add_argument("--executor", choices=("anthropic", "claude_code", "codex", "fake"))
     query_parser.add_argument("--top-k", type=int, default=3)
     edit_parser = subparsers.add_parser("edit", add_help=False)
     edit_parser.add_argument("role_name")
     edit_parser.add_argument("request_tokens", nargs="+")
-    edit_parser.add_argument("--executor", choices=("codex", "claude_code", "fake"))
+    edit_parser.add_argument("--executor", choices=("anthropic", "claude_code", "codex", "fake"))
     edit_parser.add_argument("--top-k", type=int, default=1)
 
     role_parser = subparsers.add_parser("role", add_help=False)

@@ -89,31 +89,38 @@ def build_parser() -> argparse.ArgumentParser:
     )
     install_claude_parser.add_argument("--path", type=Path, default=Path.cwd(), help="Repo root or nested path to inspect")
     install_claude_parser.add_argument("--force", action="store_true")
+    install_fastapi_parser = install_subparsers.add_parser(
+        "fastapi",
+        help="Scaffold a FastAPI Slack-bridge route for embedding scoped-control in an existing backend",
+    )
+    install_fastapi_parser.add_argument("--path", type=Path, default=Path.cwd(), help="Target repo")
+    install_fastapi_parser.add_argument("--out", type=Path, help="Directory to write the bridge module into (default: <repo>/app/routers)")
+    install_fastapi_parser.add_argument("--module", default="scoped_slack_bridge", help="Python module filename without .py (default: scoped_slack_bridge)")
     install_slack_bot_parser = install_subparsers.add_parser(
         "slack-bot",
         help="Guided ~3-minute setup for the incoming Slack slash-command bot (auto-tunneled)",
     )
     install_slack_bot_parser.add_argument("--path", type=Path, default=Path.cwd(), help="Repo root or nested path to inspect")
     install_slack_bot_parser.add_argument("--port", type=int, default=8787, help="Local port the server listens on")
-    install_slack_bot_parser.add_argument("--executor", choices=("codex", "claude_code", "fake"), help="Executor used for incoming /scoped requests")
+    install_slack_bot_parser.add_argument("--executor", choices=("anthropic", "claude_code", "codex", "fake"), help="Executor used for incoming /scoped requests")
 
     query_parser = subparsers.add_parser("query", help="Run a read-only scoped query")
     query_parser.add_argument("role_name")
     query_parser.add_argument("request_tokens", nargs="+")
-    query_parser.add_argument("--executor", choices=("codex", "claude_code", "fake"))
+    query_parser.add_argument("--executor", choices=("anthropic", "claude_code", "codex", "fake"))
     query_parser.add_argument("--top-k", type=int, default=3)
     query_parser.add_argument("--path", type=Path, default=Path.cwd(), help="Repo root or nested path to inspect")
 
     edit_parser = subparsers.add_parser("edit", help="Run a scoped edit with deterministic enforcement")
     edit_parser.add_argument("role_name")
     edit_parser.add_argument("request_tokens", nargs="+")
-    edit_parser.add_argument("--executor", choices=("codex", "claude_code", "fake"))
+    edit_parser.add_argument("--executor", choices=("anthropic", "claude_code", "codex", "fake"))
     edit_parser.add_argument("--top-k", type=int, default=1)
     edit_parser.add_argument("--path", type=Path, default=Path.cwd(), help="Repo root or nested path to inspect")
 
     remote_edit_parser = subparsers.add_parser("remote-edit", help="Run a remote edit from a GitHub event payload")
     remote_edit_parser.add_argument("--event-file", type=Path, required=True, help="Path to a GitHub event payload JSON file")
-    remote_edit_parser.add_argument("--executor", choices=("codex", "claude_code", "fake"))
+    remote_edit_parser.add_argument("--executor", choices=("anthropic", "claude_code", "codex", "fake"))
     remote_edit_parser.add_argument("--path", type=Path, default=Path.cwd(), help="Repo root or nested path to inspect")
 
     remote_triage_parser = subparsers.add_parser(
@@ -121,7 +128,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="Triage and run a remote request from a GitHub event payload (auto-picks query vs edit and role)",
     )
     remote_triage_parser.add_argument("--event-file", type=Path, required=True, help="Path to a GitHub event payload JSON file")
-    remote_triage_parser.add_argument("--executor", choices=("codex", "claude_code", "fake"))
+    remote_triage_parser.add_argument("--executor", choices=("anthropic", "claude_code", "codex", "fake"))
     remote_triage_parser.add_argument("--triager", choices=("auto", "heuristic", "codex", "claude_code"), default="auto")
     remote_triage_parser.add_argument("--path", type=Path, default=Path.cwd(), help="Repo root or nested path to inspect")
 
@@ -133,7 +140,7 @@ def build_parser() -> argparse.ArgumentParser:
     triage_parser.add_argument("--role", help="Optional role preference; triage still checks scope")
     triage_parser.add_argument("--triager", choices=("auto", "heuristic", "codex", "claude_code"), default="auto")
     triage_parser.add_argument("--execute", action="store_true", help="Also run the query or edit after triage")
-    triage_parser.add_argument("--executor", choices=("codex", "claude_code", "fake"))
+    triage_parser.add_argument("--executor", choices=("anthropic", "claude_code", "codex", "fake"))
     triage_parser.add_argument("--path", type=Path, default=Path.cwd(), help="Repo root or nested path to inspect")
 
     slack_parser = subparsers.add_parser(
@@ -143,7 +150,7 @@ def build_parser() -> argparse.ArgumentParser:
     slack_parser.add_argument("--host", default="127.0.0.1")
     slack_parser.add_argument("--port", type=int, default=8787)
     slack_parser.add_argument("--signing-secret", help="Slack signing secret (defaults to SLACK_SIGNING_SECRET env var)")
-    slack_parser.add_argument("--executor", choices=("codex", "claude_code", "fake"))
+    slack_parser.add_argument("--executor", choices=("anthropic", "claude_code", "codex", "fake"))
     slack_parser.add_argument("--path", type=Path, default=Path.cwd(), help="Repo root or nested path to inspect")
 
     role_parser = subparsers.add_parser("role", help="Manage roles in config.yaml")

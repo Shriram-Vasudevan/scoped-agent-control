@@ -100,7 +100,11 @@ def build_query_executor(config: AppConfig, requested: str | None = None) -> Exe
         from scoped_control.executors.claude_code import ClaudeCodeExecutor
 
         return ClaudeCodeExecutor(config.executors.claude_code)
-    raise ValueError(f"Unsupported executor `{name}`. Use codex, claude_code, or fake.")
+    if name == "anthropic":
+        from scoped_control.executors.anthropic_sdk import AnthropicExecutor
+
+        return AnthropicExecutor(config.executors.claude_code)
+    raise ValueError(f"Unsupported executor `{name}`. Use anthropic, codex, claude_code, or fake.")
 
 
 def build_edit_executor(config: AppConfig, requested: str | None = None) -> ExecutorAdapter:
