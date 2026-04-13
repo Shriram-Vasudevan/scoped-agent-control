@@ -43,8 +43,9 @@ def build_parser() -> argparse.ArgumentParser:
         default="auto",
         help="Planner used when inferring scope from --intent",
     )
-    setup_parser.add_argument("--skip-annotate", action="store_true", help="Skip automatic annotation insertion")
-    setup_parser.add_argument("--force-annotations", action="store_true", help="Replace detected file annotations when auto-annotating")
+    setup_parser.add_argument("--annotate-files", action="store_true", help="Also stamp file-scope annotation headers into every matched file (off by default; the resolver synthesizes whole-file surfaces on demand)")
+    setup_parser.add_argument("--skip-annotate", action="store_true", help=argparse.SUPPRESS)  # legacy no-op; kept for backwards compatibility
+    setup_parser.add_argument("--force-annotations", action="store_true", help="With --annotate-files, replace detected file annotations")
     setup_parser.add_argument("--install-github", action="store_true", help="Install the GitHub Actions remote-edit workflow")
     setup_parser.add_argument("--install-slack", action="store_true", help="Enable Slack notifications in config")
     setup_parser.add_argument("--slack-webhook-env", default="SLACK_WEBHOOK_URL", help="Environment variable that stores the Slack webhook URL")
@@ -253,9 +254,13 @@ def _run_setup(args: argparse.Namespace) -> int:
                 enabled=guided,
             )
 
-    auto_annotate_enabled = not args.skip_annotate
-    if guided and not args.skip_annotate:
-        auto_annotate_enabled = _prompt_bool("Auto-insert file annotations now?", True)
+    auto_annotate_enabled = bool(args.annotate_files) and not args.skip_annotate
+    if guided and not args.annotate_files and not args.skip_annotate:
+        auto_annotate_enabled = _prompt_bool(
+            "Stamp file-scope annotations into every matched file now? "
+            "(usually no; the resolver handles unannotated files via role globs)",
+            False,
+        )
 
     annotate_query_globs = tuple(args.annotate_query_glob or query_paths)
     annotate_edit_globs = tuple(args.annotate_edit_glob or edit_paths)

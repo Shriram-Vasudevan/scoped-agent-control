@@ -119,11 +119,15 @@ def run_setup(
             lines.extend(f"- {item}" for item in planning_result.reasoning)
         step_number += 1
     if annotation_result is None:
-        lines.append(f"Step {step_number}: skipped auto-annotation")
+        lines.append(
+            f"Step {step_number}: config-only mode (no files modified); "
+            "role globs alone gate access. Run `scoped-control annotate --role "
+            f"{role.name}` later to add per-file overrides or span rules."
+        )
     else:
         lines.append(f"Step {step_number}: auto-annotated {len(annotation_result.annotated_files)} file(s)")
     step_number += 1
-    lines.append(f"Step {step_number}: indexed {len(index_result.index.surfaces)} surface(s)")
+    lines.append(f"Step {step_number}: indexed {len(index_result.index.surfaces)} explicit surface(s)")
     step_number += 1
 
     if annotation_result is not None and annotation_result.annotated_files:

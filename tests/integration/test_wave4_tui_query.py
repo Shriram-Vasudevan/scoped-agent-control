@@ -4,13 +4,24 @@ import asyncio
 import shutil
 from pathlib import Path
 
-from textual.widgets import Input
+from textual.widgets import Input, RichLog
 
 from scoped_control.app import ScopedControlApp
 from scoped_control.config.loader import bootstrap_repo
 
 
 FIXTURES = Path(__file__).resolve().parent.parent / "fixtures" / "wave2"
+
+
+def _log_text(app: ScopedControlApp) -> str:
+    log = app.query_one("#log", RichLog)
+    parts: list[str] = []
+    for strip in log.lines:
+        try:
+            parts.append(strip.text)
+        except AttributeError:
+            parts.append(str(strip))
+    return "\n".join(parts)
 
 
 def test_tui_query_command_runs_with_fake_executor(tmp_path) -> None:
@@ -28,16 +39,18 @@ def test_tui_query_command_runs_with_fake_executor(tmp_path) -> None:
     async def run_app() -> None:
         app = ScopedControlApp(start_path=repo_root)
         async with app.run_test() as pilot:
-            command_input = app.query_one("#command-input", Input)
+            await pilot.pause()
+            inp = app.query_one("#input", Input)
 
-            await app.on_input_submitted(Input.Submitted(command_input, "scan"))
+            await app.on_input_submitted(Input.Submitted(inp, "scan"))
             await pilot.pause()
             await app.on_input_submitted(
-                Input.Submitted(command_input, "query maintainer Explain python primary behavior --executor fake")
+                Input.Submitted(inp, "query maintainer Explain python primary behavior --executor fake")
             )
             await pilot.pause()
 
-            assert any("Query completed via fake executor." in line for line in app.console_state.results)
-            assert any("Matched python.primary" in line for line in app.console_state.results)
+            text = _log_text(app)
+            assert "Query completed via fake executor." in text
+            assert "Matched python.primary" in text
 
     asyncio.run(run_app())

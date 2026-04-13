@@ -22,6 +22,7 @@ def test_cleanup_cli_dry_run_preserves_repo_state(tmp_path, capsys) -> None:
             "--edit-path",
             "app.py",
             "--install-github",
+            "--annotate-files",
         ]
     ) == 0
     capsys.readouterr()
@@ -61,6 +62,7 @@ def test_cleanup_cli_force_removes_repo_artifacts(tmp_path, capsys) -> None:
             "--edit-path",
             "app.py",
             "--install-github",
+            "--annotate-files",
         ]
     ) == 0
     capsys.readouterr()
