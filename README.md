@@ -137,17 +137,27 @@ scoped-control triage "explain the careers intro" --execute --executor fake --pa
 ### 5. Slack — incoming slash command with real triage
 
 ```bash
-export SLACK_SIGNING_SECRET=...            # from your Slack app config
+scoped-control install slack-bot --path .
+```
+
+That one command is a ~3-minute guided flow:
+
+1. Starts a public tunnel automatically (`cloudflared` preferred, `ngrok` as fallback; the command tells you how to install either if neither is present).
+2. Prints a ready-to-paste Slack app manifest with the public URL already filled in. Paste it into [https://api.slack.com/apps?new_app=1](https://api.slack.com/apps?new_app=1) under "From a manifest".
+3. Prompts for the Signing Secret (hidden input).
+4. Waits for you to click Install to Workspace in Slack, then press Enter.
+5. Starts the local server, sends a signed smoke-test request through the tunnel, and prints a team announcement template you can paste directly into Slack.
+
+After that the server and tunnel stay running in the foreground until Ctrl+C. If the tunnel URL changes (it does when the process restarts), re-run `install slack-bot` — it'll give you the new URL and tell you where to paste it in Slack.
+
+If you already have a signing secret exported and just want the server, the lower-level command still works:
+
+```bash
+export SLACK_SIGNING_SECRET=...
 scoped-control serve-slack --path . --port 8787 --executor fake
 ```
 
-Then tunnel it (`ngrok http 8787`) and point your Slack slash command at `<public>/`. The flow for an incoming `/scoped update the careers intro copy` is:
-
-1. Slack POSTs the form to the server.
-2. The server verifies the Slack signing signature (rejects anything older than 5 minutes or with a tampered body).
-3. It runs `triage_request` — same code path as the CLI.
-4. If triage blocks, Slack gets an ephemeral `:no_entry: blocked: <reason>` reply.
-5. If triage allows, it dispatches to `query` or `edit` with the selected role and replies in-channel with the scoped result and the enforcement summary.
+The request flow is the same for both: Slack POST → signature verified → `triage_request` (same code path as the CLI) → blocked with an ephemeral reply if the role can't cover it, or dispatched to `query` / `edit` with an in-channel reply showing the scoped result and enforcement summary.
 
 ### 6. GitHub — two dispatch workflows
 
@@ -265,7 +275,8 @@ Entrypoint integrations
 - `scoped-control install claude-code [--force]` — write `.claude/commands/sc-*.md`.
 - `scoped-control install github [--force]` — write both remote-edit and remote-triage workflows.
 - `scoped-control install slack --webhook-env ENV_VAR` — enable outbound notifications and refresh the workflows.
-- `scoped-control serve-slack --host 127.0.0.1 --port 8787 [--signing-secret ...]` — run the incoming slash-command server.
+- `scoped-control install slack-bot [--port 8787] [--executor ...]` — guided ~3-minute setup of the incoming slash-command bot, including auto-tunneling and a ready-to-paste Slack manifest.
+- `scoped-control serve-slack --host 127.0.0.1 --port 8787 [--signing-secret ...]` — run the incoming slash-command server by hand (use `install slack-bot` if you haven't set it up yet).
 - `scoped-control remote-edit   --event-file <path>` — process a remote-edit dispatch payload.
 - `scoped-control remote-triage --event-file <path>` — triage and run a remote dispatch payload.
 

@@ -89,6 +89,13 @@ def build_parser() -> argparse.ArgumentParser:
     )
     install_claude_parser.add_argument("--path", type=Path, default=Path.cwd(), help="Repo root or nested path to inspect")
     install_claude_parser.add_argument("--force", action="store_true")
+    install_slack_bot_parser = install_subparsers.add_parser(
+        "slack-bot",
+        help="Guided ~3-minute setup for the incoming Slack slash-command bot (auto-tunneled)",
+    )
+    install_slack_bot_parser.add_argument("--path", type=Path, default=Path.cwd(), help="Repo root or nested path to inspect")
+    install_slack_bot_parser.add_argument("--port", type=int, default=8787, help="Local port the server listens on")
+    install_slack_bot_parser.add_argument("--executor", choices=("codex", "claude_code", "fake"), help="Executor used for incoming /scoped requests")
 
     query_parser = subparsers.add_parser("query", help="Run a read-only scoped query")
     query_parser.add_argument("role_name")
@@ -194,6 +201,8 @@ def main(argv: list[str] | None = None) -> int:
             return _run_triage(args)
         if args.command == "serve-slack":
             return _run_serve_slack(args)
+        if args.command == "install" and getattr(args, "install_command", None) == "slack-bot":
+            return _run_install_slack_bot(args)
         if args.command in {"check", "scan", "index", "cleanup", "annotate", "install", "query", "edit", "role", "surface", "validator"}:
             return _run_shared_command(args)
         return _run_tui(Path.cwd())
@@ -427,6 +436,16 @@ def _run_serve_slack(args: argparse.Namespace) -> int:
         executor=args.executor,
     )
     return 0
+
+
+def _run_install_slack_bot(args: argparse.Namespace) -> int:
+    from scoped_control.integrations.slack_bot import guided_setup
+
+    return guided_setup(
+        args.path,
+        port=args.port,
+        executor=args.executor,
+    )
 
 
 def _print_triage_decision(decision) -> None:
