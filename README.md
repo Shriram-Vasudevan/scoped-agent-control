@@ -9,12 +9,20 @@ In practice, this enables non-technical users (e.g. PMs, GTM, etc.) to safely ma
 ## Install
 
 ```bash
-pipx install git+https://github.com/Shriram-Vasudevan/scoped-agent-control
+pipx install scoped-agent-control
 # or
-uv tool install git+https://github.com/Shriram-Vasudevan/scoped-agent-control
+uv tool install scoped-agent-control
+# or
+pip install scoped-agent-control
 ```
 
-Both put `scoped-control` on PATH globally. Requires Python 3.12+.
+Any of these puts `scoped-control` on PATH globally. Requires Python 3.11+.
+
+To use the Anthropic Python SDK executor (recommended for production — avoids shelling out to the `claude` CLI):
+
+```bash
+pipx install 'scoped-agent-control[anthropic]'
+```
 
 For local development:
 
