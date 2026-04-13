@@ -5,9 +5,20 @@ from dataclasses import replace
 import shutil
 from pathlib import Path
 
-from textual.widgets import Input
+from textual.widgets import Input, RichLog
 
 from scoped_control.app import ScopedControlApp
+
+
+def _log_text(app: ScopedControlApp) -> str:
+    log = app.query_one("#log", RichLog)
+    parts: list[str] = []
+    for strip in log.lines:
+        try:
+            parts.append(strip.text)
+        except AttributeError:
+            parts.append(str(strip))
+    return "\n".join(parts)
 from scoped_control.config.loader import bootstrap_repo, load_config
 from scoped_control.config.mutator import update_role, write_config
 from scoped_control.index.builder import rebuild_index
@@ -43,13 +54,15 @@ def test_tui_edit_command_applies_valid_fake_edit(tmp_path) -> None:
     async def run_app() -> None:
         app = ScopedControlApp(start_path=repo_root)
         async with app.run_test() as pilot:
-            command_input = app.query_one("#command-input", Input)
+            await pilot.pause()
+            inp = app.query_one("#input", Input)
             await app.on_input_submitted(
-                Input.Submitted(command_input, "edit maintainer change return 1 to return 10 --executor fake")
+                Input.Submitted(inp, "edit maintainer change return 1 to return 10 --executor fake")
             )
             await pilot.pause()
 
-            assert any("Edit completed via fake executor." in line for line in app.console_state.results)
+            text = _log_text(app)
+            assert "Edit completed via fake executor." in text
             assert "return 10" in (repo_root / "editable_module.py").read_text(encoding="utf-8")
 
     asyncio.run(run_app())

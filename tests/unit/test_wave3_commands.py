@@ -5,6 +5,7 @@ from pathlib import Path
 
 from scoped_control.cli import main
 from scoped_control.config.loader import bootstrap_repo, load_config
+from scoped_control.tui.commands import execute_command
 
 
 FIXTURES = Path(__file__).resolve().parent.parent / "fixtures" / "wave2"
@@ -73,3 +74,13 @@ def test_surface_and_validator_cli_commands(tmp_path, capsys) -> None:
     assert main(["validator", "list", "--path", str(repo_root)]) == 0
     validator_output = capsys.readouterr().out
     assert "No validators configured." in validator_output
+
+
+def test_cleanup_command_is_available_in_tui_parser(tmp_path) -> None:
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir()
+
+    result = execute_command(repo_root, "cleanup --dry-run")
+
+    assert result.ok is True
+    assert result.message == "No scoped-control artifacts found."

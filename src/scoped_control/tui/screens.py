@@ -1,18 +1,9 @@
-"""Reusable widgets for the Textual shell."""
+"""Legacy module. The conversational TUI in `scoped_control.app` replaces the
+screen-based setup flow that used to live here. Kept as a thin placeholder so
+any lingering imports continue to resolve.
+"""
 
 from __future__ import annotations
 
-from textual.widgets import Static
 
-
-class SummaryPanel(Static):
-    """Simple bordered summary panel."""
-
-    def __init__(self, title: str, body: str = "", **kwargs: object) -> None:
-        super().__init__("", **kwargs)
-        self.title = title
-        self.set_body(body)
-
-    def set_body(self, body: str) -> None:
-        text = body.strip() if body.strip() else "Not loaded yet."
-        self.update(f"[b]{self.title}[/b]\n{text}")
+__all__: tuple[str, ...] = ()

@@ -24,7 +24,7 @@ def test_install_github_and_remote_edit_cli(tmp_path, capsys) -> None:
     install_output = capsys.readouterr().out
 
     assert install_exit == 0
-    assert "Installed GitHub remote-edit scaffolding." in install_output
+    assert "Installed GitHub remote-edit and remote-triage scaffolding." in install_output
     workflow_path = repo_root / ".github" / "workflows" / "scoped-control.yml"
     assert workflow_path.exists()
     config_payload = yaml.safe_load((repo_root / ".scoped-control" / "config.yaml").read_text(encoding="utf-8"))
