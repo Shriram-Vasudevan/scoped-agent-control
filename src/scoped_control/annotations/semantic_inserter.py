@@ -287,12 +287,10 @@ def _run_claude(config: AppConfig, root: Path, prompt: str) -> str:
         "text",
         "--permission-mode",
         "default",
-        "--tools",
-        "",
-        prompt,
     ]
     completed = subprocess.run(  # noqa: S603
         command,
+        input=prompt,
         text=True,
         capture_output=True,
         cwd=root,
