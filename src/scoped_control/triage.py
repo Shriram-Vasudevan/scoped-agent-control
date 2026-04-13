@@ -117,14 +117,17 @@ def triage_request(
 
     if llm_payload is not None:
         mode = _coerce_mode(llm_payload.get("mode"))
-        targets = _coerce_files(llm_payload.get("target_files"), index)
+        targets = _coerce_files(llm_payload.get("target_files"), index, repo_root=repo_root, config=config)
         reasoning.extend(_coerce_reasons(llm_payload.get("reasoning")))
         suggested_role = llm_payload.get("role")
         suggested_role = suggested_role if isinstance(suggested_role, str) and suggested_role else None
     else:
         mode = _heuristic_mode(text)
-        targets = _heuristic_targets(text, index)
-        reasoning.append("Heuristic triager: mode inferred from verbs, files matched by keyword overlap with index.")
+        targets = _heuristic_targets(text, index, repo_root=repo_root, config=config)
+        reasoning.append(
+            "Heuristic triager: mode inferred from verbs, files matched by "
+            "keyword overlap with the index and with files covered by role globs."
+        )
         suggested_role = None
 
     if not mode:
@@ -197,27 +200,129 @@ def _heuristic_mode(text: str) -> str:
     return "query"
 
 
-def _heuristic_targets(text: str, index: IndexRecord) -> tuple[str, ...]:
+def _heuristic_targets(
+    text: str,
+    index: IndexRecord,
+    *,
+    repo_root: Path | None = None,
+    config: AppConfig | None = None,
+) -> tuple[str, ...]:
+    """Score both indexed surfaces and on-disk files covered by any role's globs.
+
+    Without the repo walk, files that have no explicit annotation are invisible
+    to triage, which defeats the config-only policy model.
+    """
+
     tokens = {token.lower() for token in TOKEN_RE.findall(text) if len(token) > 1}
     if not tokens:
         return ()
-    scored: list[tuple[int, str]] = []
-    seen_files: set[str] = set()
+
+    # `candidates[file]` is either the explicit surface or None (implicit).
+    candidates: dict[str, object] = {}
     for surface in index.surfaces:
+        candidates.setdefault(surface.file, surface)
+    if repo_root is not None and config is not None:
+        for path in _candidate_files_from_config(repo_root, config):
+            candidates.setdefault(path, None)
+
+    scored: list[tuple[int, str]] = []
+    text_lower = text.lower()
+    for file_path, surface in candidates.items():
         score = 0
-        surface_tokens = {t.lower() for t in TOKEN_RE.findall(surface.id + " " + surface.file)}
-        overlap = tokens & surface_tokens
+        stem = PurePosixPath(file_path).stem.lower()
+        if stem and stem in text_lower:
+            score += 15
+        path_tokens = {t.lower() for t in TOKEN_RE.findall(file_path)}
+        overlap = tokens & path_tokens
         if overlap:
             score += 10 * len(overlap)
-        # Raw substring match of the filename stem is a strong signal.
-        stem = PurePosixPath(surface.file).stem.lower()
-        if stem and stem in text.lower():
-            score += 15
-        if score > 0 and surface.file not in seen_files:
-            scored.append((score, surface.file))
-            seen_files.add(surface.file)
+        if surface is not None:
+            surface_tokens = {t.lower() for t in TOKEN_RE.findall(getattr(surface, "id", ""))}
+            surface_overlap = tokens & surface_tokens
+            if surface_overlap:
+                score += 10 * len(surface_overlap)
+        if score > 0:
+            scored.append((score, file_path))
+
     scored.sort(key=lambda item: (-item[0], item[1]))
     return tuple(path for _, path in scored[:5])
+
+
+def _candidate_files_from_config(repo_root: Path, config: AppConfig) -> list[str]:
+    """Return repo-relative paths that any role's globs cover, ignoring noise dirs."""
+
+    patterns = tuple(
+        dict.fromkeys(
+            pattern
+            for role in config.roles
+            for pattern in (*role.query_paths, *role.edit_paths)
+        )
+    )
+    if not patterns:
+        return []
+    results: list[str] = []
+    for path in sorted(repo_root.rglob("*")):
+        if not path.is_file():
+            continue
+        relative_obj = path.relative_to(repo_root)
+        if any(part in _WALK_IGNORE_DIRS for part in relative_obj.parts):
+            continue
+        if path.suffix.lower() in _WALK_IGNORE_SUFFIXES:
+            continue
+        relative = relative_obj.as_posix()
+        if _any_pattern_matches(relative, patterns):
+            results.append(relative)
+    return results
+
+
+def _any_pattern_matches(relative: str, patterns: tuple[str, ...]) -> bool:
+    pure = PurePosixPath(relative)
+    for pattern in patterns:
+        if pattern in {"*", "**", "**/*"}:
+            return True
+        if fnmatchcase(relative, pattern) or pure.match(pattern):
+            return True
+    return False
+
+
+_WALK_IGNORE_DIRS = {
+    ".git",
+    ".hg",
+    ".svn",
+    ".scoped-control",
+    ".venv",
+    "node_modules",
+    "__pycache__",
+    ".pytest_cache",
+    "build",
+    "dist",
+    ".next",
+    ".cache",
+}
+_WALK_IGNORE_SUFFIXES = {
+    ".pyc",
+    ".pyo",
+    ".so",
+    ".dylib",
+    ".dll",
+    ".class",
+    ".o",
+    ".a",
+    ".exe",
+    ".bin",
+    ".lock",
+    ".svg",
+    ".png",
+    ".jpg",
+    ".jpeg",
+    ".gif",
+    ".webp",
+    ".pdf",
+    ".zip",
+    ".tar",
+    ".gz",
+    ".wasm",
+}
 
 
 # ---------------------------------------------------------------------------
@@ -450,10 +555,24 @@ def _coerce_mode(raw: object) -> str:
     return ""
 
 
-def _coerce_files(raw: object, index: IndexRecord) -> tuple[str, ...]:
+def _coerce_files(
+    raw: object,
+    index: IndexRecord,
+    *,
+    repo_root: Path | None = None,
+    config: AppConfig | None = None,
+) -> tuple[str, ...]:
+    """Accept file paths from the LLM triager; validate they exist in scope.
+
+    Scope = indexed surface files OR files covered by any role's globs.
+    Values outside that set are dropped.
+    """
+
     if not isinstance(raw, list):
         return ()
-    known = {surface.file for surface in index.surfaces}
+    known: set[str] = {surface.file for surface in index.surfaces}
+    if repo_root is not None and config is not None:
+        known.update(_candidate_files_from_config(repo_root, config))
     result: list[str] = []
     for item in raw:
         if isinstance(item, str) and item.strip():
