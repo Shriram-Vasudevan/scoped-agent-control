@@ -8,6 +8,7 @@ import shlex
 from pathlib import Path
 
 from scoped_control.annotations.inserter import auto_annotate_repo
+from scoped_control.cleanup import cleanup_repo
 from scoped_control.config.loader import check_repo, load_config, repo_paths
 from scoped_control.config.mutator import add_role, remove_role, update_role, write_config
 from scoped_control.enforcement.diff_checks import apply_file_changes, collect_file_changes, enforce_diff_limits
@@ -105,6 +106,9 @@ def execute_args(repo_path: Path, args: argparse.Namespace, *, raw_command: str 
 
     if args.command == "annotate":
         return _execute_annotate_command(repo_path, args, command_name)
+
+    if args.command == "cleanup":
+        return _execute_cleanup_command(repo_path, args, command_name)
 
     if args.command == "query":
         return _execute_query_command(repo_path, args, command_name)
@@ -219,12 +223,37 @@ def _execute_annotate_command(repo_path: Path, args: argparse.Namespace, command
     )
 
 
+def _execute_cleanup_command(repo_path: Path, args: argparse.Namespace, command_name: str) -> CommandResult:
+    if not args.force and not args.dry_run:
+        return CommandResult(
+            command=command_name,
+            ok=False,
+            message="Cleanup is destructive. Re-run with `cleanup --force` or preview with `cleanup --dry-run`.",
+        )
+
+    result = cleanup_repo(repo_path, dry_run=args.dry_run)
+    artifact_count = len(result.annotation_files) + len(result.removed_files) + len(result.removed_directories)
+    lines = (
+        f"Repo: {result.root}",
+        f"Annotation files: {len(result.annotation_files)}",
+        f"Annotation blocks: {result.annotation_blocks_removed}",
+        *tuple(f"Cleaned annotation: {path}" for path in result.annotation_files),
+        *tuple(f"Removed file: {path}" for path in result.removed_files),
+        *tuple(f"Removed directory: {path}" for path in result.removed_directories),
+        *tuple(f"Warning: {warning}" for warning in result.warnings),
+    )
+    if artifact_count == 0:
+        return CommandResult(command=command_name, ok=True, message="No scoped-control artifacts found.", lines=lines)
+    message = "Cleanup preview complete." if args.dry_run else "Removed scoped-control artifacts."
+    return CommandResult(command=command_name, ok=True, message=message, lines=lines)
+
+
 def _execute_query_command(repo_path: Path, args: argparse.Namespace, command_name: str) -> CommandResult:
     paths, config = load_config(repo_path)
     index = load_index(paths.index_path)
     role = config.get_role(args.role_name)
     request = " ".join(args.request_tokens).strip()
-    resolution = resolve_query_surfaces(role, index, request, top_k=args.top_k)
+    resolution = resolve_query_surfaces(role, index, request, top_k=args.top_k, repo_root=paths.root)
     if not resolution.matches:
         return CommandResult(command=command_name, ok=False, message=f"No query surfaces matched for role `{role.name}`.")
 
@@ -252,7 +281,7 @@ def _execute_edit_command(repo_path: Path, args: argparse.Namespace, command_nam
     index = load_index(paths.index_path)
     role = config.get_role(args.role_name)
     request = " ".join(args.request_tokens).strip()
-    resolution = resolve_edit_surfaces(role, index, request, top_k=args.top_k)
+    resolution = resolve_edit_surfaces(role, index, request, top_k=args.top_k, repo_root=paths.root)
     if not resolution.matches:
         return CommandResult(command=command_name, ok=False, message=f"No edit surfaces matched for role `{role.name}`.")
 
@@ -333,7 +362,7 @@ def _execute_edit_command(repo_path: Path, args: argparse.Namespace, command_nam
 
 def _execute_install_command(repo_path: Path, args: argparse.Namespace, command_name: str) -> CommandResult:
     if args.install_command == "github":
-        config_path, workflow_file = install_github(
+        config_path, workflow_file, triage_workflow_file = install_github(
             repo_path,
             workflow_path=args.workflow_path,
             force=args.force,
@@ -341,12 +370,24 @@ def _execute_install_command(repo_path: Path, args: argparse.Namespace, command_
         return CommandResult(
             command=command_name,
             ok=True,
-            message="Installed GitHub remote-edit scaffolding.",
+            message="Installed GitHub remote-edit and remote-triage scaffolding.",
             lines=(
                 f"Config: {config_path}",
-                f"Workflow: {workflow_file}",
-                "Next: add OPENAI_API_KEY and/or ANTHROPIC_API_KEY repository secrets before running the workflow.",
+                f"Edit workflow: {workflow_file}",
+                f"Triage workflow: {triage_workflow_file}",
+                "Next: add OPENAI_API_KEY and/or ANTHROPIC_API_KEY repository secrets before running the workflows.",
             ),
+        )
+
+    if args.install_command == "claude-code":
+        from scoped_control.integrations.claude_code import install_claude_code
+
+        installed = install_claude_code(repo_path, force=args.force)
+        return CommandResult(
+            command=command_name,
+            ok=True,
+            message=f"Installed {len(installed)} Claude Code slash command(s).",
+            lines=tuple(f"Command: {path}" for path in installed),
         )
 
     if args.install_command == "slack":
@@ -425,6 +466,9 @@ def _build_command_parser() -> _CommandParser:
     subparsers.add_parser("check", add_help=False)
     subparsers.add_parser("scan", add_help=False)
     subparsers.add_parser("index", add_help=False)
+    cleanup_parser = subparsers.add_parser("cleanup", add_help=False)
+    cleanup_parser.add_argument("--dry-run", action="store_true")
+    cleanup_parser.add_argument("--force", action="store_true")
     annotate_parser = subparsers.add_parser("annotate", add_help=False)
     annotate_parser.add_argument("--role", action="append", required=True)
     annotate_parser.add_argument("--query-glob", action="append")
@@ -439,6 +483,8 @@ def _build_command_parser() -> _CommandParser:
     install_slack_parser = install_commands.add_parser("slack", add_help=False)
     install_slack_parser.add_argument("--webhook-env", default="SLACK_WEBHOOK_URL")
     install_commands.add_parser("email", add_help=False)
+    install_claude_parser = install_commands.add_parser("claude-code", add_help=False)
+    install_claude_parser.add_argument("--force", action="store_true")
     query_parser = subparsers.add_parser("query", add_help=False)
     query_parser.add_argument("role_name")
     query_parser.add_argument("request_tokens", nargs="+")
@@ -504,7 +550,7 @@ def _resolve_annotation_globs(config, *, role_names: tuple[str, ...], query_glob
 
 
 def _command_label(args: argparse.Namespace) -> str:
-    if args.command in {"check", "scan", "index"}:
+    if args.command in {"check", "scan", "index", "cleanup"}:
         return args.command
     if args.command == "annotate":
         return "annotate"

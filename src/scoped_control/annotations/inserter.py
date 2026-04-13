@@ -7,7 +7,7 @@ from fnmatch import fnmatchcase
 from pathlib import Path, PurePosixPath
 import re
 
-from scoped_control.annotations.parser import parse_annotation_candidate
+from scoped_control.annotations.parser import AnnotationCandidate, finalize_annotation_run, parse_annotation_candidate
 
 IGNORED_DIRECTORIES = {".git", ".hg", ".svn", ".scoped-control", ".venv", "node_modules", "__pycache__", ".pytest_cache", "build", "dist"}
 HASH_COMMENT_EXTENSIONS = {
@@ -45,6 +45,13 @@ SLASH_COMMENT_EXTENSIONS = {
 class AnnotationInsertResult:
     annotated_files: tuple[str, ...]
     skipped_files: tuple[str, ...]
+    warnings: tuple[str, ...]
+
+
+@dataclass(slots=True, frozen=True)
+class AnnotationCleanupResult:
+    cleaned_files: tuple[str, ...]
+    removed_blocks: int
     warnings: tuple[str, ...]
 
 
@@ -107,6 +114,39 @@ def auto_annotate_repo(
     )
 
 
+def remove_auto_annotations(root: Path, *, dry_run: bool = False) -> AnnotationCleanupResult:
+    """Remove auto-generated file-scope annotations inserted by scoped-control."""
+
+    cleaned_files: list[str] = []
+    warnings: list[str] = []
+    removed_blocks = 0
+
+    for path in root.rglob("*"):
+        if any(part in IGNORED_DIRECTORIES for part in path.parts):
+            continue
+        if not path.is_file() or _comment_prefix(path) is None:
+            continue
+        try:
+            original_text = path.read_text(encoding="utf-8")
+        except UnicodeDecodeError:
+            continue
+
+        relative_path = path.relative_to(root).as_posix()
+        updated_text, file_removed_blocks = _remove_generated_annotation_blocks(relative_path, path, original_text)
+        if file_removed_blocks == 0:
+            continue
+        if not dry_run:
+            path.write_text(updated_text, encoding="utf-8")
+        cleaned_files.append(relative_path)
+        removed_blocks += file_removed_blocks
+
+    return AnnotationCleanupResult(
+        cleaned_files=tuple(cleaned_files),
+        removed_blocks=removed_blocks,
+        warnings=tuple(warnings),
+    )
+
+
 def _collect_matched_files(root: Path, query_globs: tuple[str, ...], edit_globs: tuple[str, ...]) -> tuple[str, ...]:
     matched: list[str] = []
     for path in root.rglob("*"):
@@ -159,11 +199,7 @@ def _surface_id(relative_path: str) -> str:
 
 def _insert_annotation_block(text: str, block: str) -> str:
     lines = text.splitlines()
-    insertion_index = 0
-    if lines and lines[0].startswith("#!"):
-        insertion_index = 1
-        if len(lines) > 1 and re.match(r"^#.*coding[:=]", lines[1]):
-            insertion_index = 2
+    insertion_index = _annotation_insertion_index(lines)
 
     before = lines[:insertion_index]
     after = lines[insertion_index:]
@@ -172,3 +208,74 @@ def _insert_annotation_block(text: str, block: str) -> str:
         assembled.append("")
         assembled.extend(after)
     return "\n".join(assembled).rstrip() + "\n"
+
+
+def _annotation_insertion_index(lines: list[str]) -> int:
+    insertion_index = 0
+    if lines and lines[0].startswith("#!"):
+        insertion_index = 1
+        if len(lines) > 1 and re.match(r"^#.*coding[:=]", lines[1]):
+            insertion_index = 2
+    return insertion_index
+
+
+def _remove_generated_annotation_blocks(relative_path: str, file_path: Path, text: str) -> tuple[str, int]:
+    lines = text.splitlines()
+    cursor = _annotation_insertion_index(lines)
+    removed_blocks = 0
+
+    while True:
+        run, run_end = _parse_annotation_run(lines, cursor)
+        if not run:
+            break
+
+        metadata, run_warnings = finalize_annotation_run(run, relative_path)
+        if run_warnings or metadata is None or not _matches_generated_annotation(relative_path, run, file_path, metadata):
+            break
+
+        delete_end = run_end
+        while delete_end < len(lines) and lines[delete_end] == "" and delete_end < run_end + 2:
+            delete_end += 1
+        del lines[cursor:delete_end]
+        removed_blocks += 1
+
+    return (_lines_to_text(lines), removed_blocks)
+
+
+def _parse_annotation_run(lines: list[str], start_index: int) -> tuple[list[AnnotationCandidate], int]:
+    if start_index >= len(lines):
+        return [], start_index
+
+    run: list[AnnotationCandidate] = []
+    index = start_index
+    while index < len(lines):
+        candidate = parse_annotation_candidate(lines[index], index + 1)
+        if not candidate.is_candidate:
+            break
+        run.append(candidate)
+        index += 1
+    return run, index
+
+
+def _matches_generated_annotation(relative_path: str, run: list[AnnotationCandidate], file_path: Path, metadata) -> bool:
+    if _comment_prefix(file_path) is None:
+        return False
+    if metadata.surface != _surface_id(relative_path):
+        return False
+    if tuple(metadata.invariants) != ("file_scope",):
+        return False
+    if metadata.depends_on:
+        return False
+    if not metadata.roles:
+        return False
+    if not metadata.modes or any(mode not in {"query", "edit"} for mode in metadata.modes):
+        return False
+
+    fields = {candidate.field for candidate in run if candidate.field is not None}
+    return {"surface", "roles", "modes", "invariants"}.issubset(fields)
+
+
+def _lines_to_text(lines: list[str]) -> str:
+    if not lines:
+        return ""
+    return "\n".join(lines) + "\n"

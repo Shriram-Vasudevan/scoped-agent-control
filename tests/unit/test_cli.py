@@ -26,10 +26,18 @@ def test_cli_check_reports_success(tmp_path, capsys):
     assert "OK:" in captured.out
 
 
-def test_cli_without_args_prints_guidance(capsys):
+def test_cli_without_args_launches_tui(monkeypatch, capsys):
+    calls = []
+
+    def fake_run_tui(path):
+        calls.append(path)
+        return 0
+
+    monkeypatch.setattr("scoped_control.cli._run_tui", fake_run_tui)
+
     exit_code = main([])
 
     captured = capsys.readouterr()
     assert exit_code == 0
-    assert "usage: scoped-control" in captured.out
-    assert "scoped-control setup" in captured.out
+    assert calls
+    assert captured.out == ""
